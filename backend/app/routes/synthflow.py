@@ -33,14 +33,17 @@ async def synthflow_webhook(
         # Check for different Synthflow payload structures
         # Synthflow might send data in different formats
         
-        # Try to extract from root level first
-        caller_message = payload.get("message", "")
+        # Try to extract from root level first - SYNTHFLOW SENDS 'query'!
+        caller_message = payload.get("query", "")  # This is what Synthflow sends!
         call_id = payload.get("call_id", "")
         caller_phone = payload.get("from_number", "")
         
-        # If not found, try nested structures
+        # If not found, try other common fields
         if not caller_message:
-            # Try 'input' field (common in Synthflow)
+            caller_message = payload.get("message", "")
+        
+        if not caller_message:
+            # Try 'input' field
             caller_message = payload.get("input", "")
         
         if not caller_message:
