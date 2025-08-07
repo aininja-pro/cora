@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Mic, MicOff, Loader2, Volume2 } from 'lucide-react'
+import { API_URL } from '../config'
 
 function VoiceAssistant({ onCommand }) {
   const [isListening, setIsListening] = useState(false)
@@ -46,7 +47,7 @@ function VoiceAssistant({ onCommand }) {
     
     try {
       // Send to backend for processing
-      const response = await fetch('http://localhost:8000/api/agent/voice-command', {
+      const response = await fetch(`${API_URL}/api/agent/voice-command`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -62,7 +63,7 @@ function VoiceAssistant({ onCommand }) {
       
       // Try to use ElevenLabs for better voice quality
       try {
-        const ttsResponse = await fetch('http://localhost:8000/api/voice/text-to-speech', {
+        const ttsResponse = await fetch(`${API_URL}/api/voice/text-to-speech`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

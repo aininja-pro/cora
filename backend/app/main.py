@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 import os
-from .routes import synthflow, agent, voice
 
-# Load environment variables
-load_dotenv()
+# Only load .env in development
+if os.getenv("APP_ENV") != "production":
+    from dotenv import load_dotenv
+    load_dotenv()
+
+from .routes import synthflow, agent, voice
 
 app = FastAPI(
     title="CORA API",
