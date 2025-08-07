@@ -71,15 +71,24 @@ async def synthflow_webhook(
         
         # Save call to database for frontend to display
         try:
-            call_handler.supabase.table('calls').insert({
-                'call_id': call_id,
-                'phone_number': caller_phone,
-                'transcript': caller_message,
-                'ai_response': response["message"],
-                'property_mentioned': property_reference,
-                'lead_score': 75 if property_reference else 50,  # Higher score if they mention a property
-                'status': 'active'
-            }).execute()
+            # Use the basic columns that exist in the database
+            call_data = {
+                'phone_number': caller_phone or 'Unknown',
+                'transcript': caller_message or 'No transcript',
+                'status': 'completed',
+                'duration': 0  # Will be updated when call ends
+            }
+            
+            # Try to add optional columns if they exist
+            try:
+                call_data['ai_response'] = response["message"]
+                call_data['property_mentioned'] = property_reference
+                call_data['lead_score'] = 75 if property_reference else 50
+            except:
+                pass
+            
+            result = call_handler.supabase.table('calls').insert(call_data).execute()
+            logger.info(f"Call saved to database: {result}")
         except Exception as e:
             logger.error(f"Error saving call to database: {str(e)}")
         
