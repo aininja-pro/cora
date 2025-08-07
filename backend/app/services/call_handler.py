@@ -32,12 +32,45 @@ class CallHandler:
             Dict containing the response message and any actions to take
         """
         try:
+            # Extract property reference from message if not provided
+            if not property_reference and caller_message:
+                # Look for common property references in the message
+                import re
+                # Try to find addresses in various formats
+                patterns = [
+                    r'\d+\s+\w+\s+(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr)',
+                    r'\d+\s+\w+\s+\w+',  # Simple: "123 Main Street"
+                    r'property at\s+(.+?)(?:\.|,|$)',  # "property at ..."
+                    r'listing for\s+(.+?)(?:\.|,|$)',  # "listing for ..."
+                ]
+                
+                for pattern in patterns:
+                    match = re.search(pattern, caller_message.lower())
+                    if match:
+                        property_reference = match.group(1) if match.lastindex else match.group()
+                        property_reference = property_reference.strip()
+                        logger.info(f"Extracted property reference from message: {property_reference}")
+                        break
+            
             # Load property information if reference provided
             property_context = ""
+            properties_list = ""
+            
             if property_reference:
                 property_data = await self._get_property_info(property_reference)
                 if property_data:
                     property_context = self._format_property_context(property_data)
+                    logger.info(f"Found property: {property_data.get('address')}")
+                else:
+                    logger.warning(f"No property found for reference: {property_reference}")
+            
+            # If no specific property found, get all available properties
+            if not property_context:
+                all_properties = await self._get_all_properties()
+                if all_properties:
+                    properties_list = "\n\nAvailable properties:\n"
+                    for prop in all_properties[:5]:  # Show top 5
+                        properties_list += f"- {prop.get('address')}: ${prop.get('price', 0):,}, {prop.get('beds')} beds, {prop.get('baths')} baths\n"
             
             # Get conversation history
             conversation_history = await self._get_conversation_history(call_id)
@@ -46,7 +79,7 @@ class CallHandler:
             messages = [
                 {
                     "role": "system",
-                    "content": self._get_system_prompt(property_context)
+                    "content": self._get_system_prompt(property_context + properties_list)
                 }
             ]
             
@@ -203,17 +236,55 @@ Status: {property_data.get('status', 'active').title()}
     async def _get_property_info(self, property_reference: str) -> Optional[Dict]:
         """Fetch property information from database."""
         try:
-            # Search by address using ilike (case-insensitive partial match)
+            # Clean up the property reference
+            property_reference = property_reference.strip().lower()
+            
+            # Try different search strategies
+            # 1. Exact match (case-insensitive)
+            response = self.supabase.table('listings').select("*").ilike(
+                'address', f'{property_reference}'
+            ).limit(1).execute()
+            
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            
+            # 2. Partial match
             response = self.supabase.table('listings').select("*").ilike(
                 'address', f'%{property_reference}%'
             ).limit(1).execute()
             
             if response.data and len(response.data) > 0:
                 return response.data[0]
+            
+            # 3. Try just the street number and first word
+            parts = property_reference.split()
+            if len(parts) >= 2:
+                simple_search = f"{parts[0]} {parts[1]}"
+                response = self.supabase.table('listings').select("*").ilike(
+                    'address', f'%{simple_search}%'
+                ).limit(1).execute()
+                
+                if response.data and len(response.data) > 0:
+                    return response.data[0]
+            
             return None
         except Exception as e:
             logger.error(f"Error fetching property info: {str(e)}")
             return None
+    
+    async def _get_all_properties(self) -> List[Dict]:
+        """Get all available properties."""
+        try:
+            response = self.supabase.table('listings').select("*").eq(
+                'status', 'active'
+            ).limit(10).execute()
+            
+            if response.data:
+                return response.data
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching all properties: {str(e)}")
+            return []
     
     async def _get_conversation_history(self, call_id: str) -> List[Dict]:
         """Get conversation history for current call."""
