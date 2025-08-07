@@ -1,10 +1,9 @@
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException
 from typing import Dict, Any
 import json
 import logging
 from datetime import datetime
 from ..services.call_handler import CallHandler
-from ..deps.auth import verify_synthflow_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +12,7 @@ router = APIRouter(prefix="/api/synthflow", tags=["synthflow"])
 @router.post("/webhook")
 async def synthflow_webhook(
     request: Request,
-    payload: Dict[str, Any],
-    verified: bool = Depends(verify_synthflow_webhook)
+    payload: Dict[str, Any]
 ):
     """
     Handle incoming webhooks from Synthflow for real-time call processing.
@@ -185,8 +183,7 @@ async def synthflow_webhook(
 @router.post("/call-ended")
 async def call_ended_webhook(
     request: Request,
-    payload: Dict[str, Any],
-    verified: bool = Depends(verify_synthflow_webhook)
+    payload: Dict[str, Any]
 ):
     """Handle call ended notifications from Synthflow."""
     try:
