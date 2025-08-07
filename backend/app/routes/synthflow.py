@@ -54,8 +54,9 @@ async def synthflow_webhook(
             if match:
                 property_reference = match.group()
         
-        logger.info(f"Synthflow webhook - Call ID: {call_id}, Message: {caller_message}, Property: {property_reference}")
-        logger.info(f"Full payload: {json.dumps(payload)}")
+        # Log the full payload to understand what Synthflow is sending
+        logger.info(f"Full Synthflow payload: {json.dumps(payload)}")
+        logger.info(f"Extracted - Call ID: {call_id}, Message: {caller_message}, Property: {property_reference}")
         
         # Initialize call handler
         call_handler = CallHandler()
@@ -70,9 +71,7 @@ async def synthflow_webhook(
         
         # Save call to database for frontend to display
         try:
-            from ..services.call_handler import CallHandler
-            handler = CallHandler()
-            handler.supabase.table('calls').insert({
+            call_handler.supabase.table('calls').insert({
                 'call_id': call_id,
                 'phone_number': caller_phone,
                 'transcript': caller_message,
