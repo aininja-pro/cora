@@ -2,6 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends
 from typing import Dict, Any
 import json
 import logging
+from datetime import datetime
 from ..services.call_handler import CallHandler
 from ..deps.auth import verify_synthflow_webhook
 
@@ -24,27 +25,60 @@ async def synthflow_webhook(
     3. Return response for Synthflow to speak via TTS
     """
     try:
-        # Extract call details
-        call_id = payload.get("call_id", payload.get("call", {}).get("id", "unknown"))
+        # COMPREHENSIVE LOGGING - Log absolutely everything
+        logger.info("\n" + "="*60)
+        logger.info("SYNTHFLOW WEBHOOK RECEIVED")
+        logger.info("="*60)
+        logger.info(f"RAW PAYLOAD: {json.dumps(payload, indent=2)}")
+        logger.info("="*60)
         
-        # Try different possible message fields from Synthflow
-        caller_message = (
-            payload.get("message") or 
-            payload.get("transcript") or 
-            payload.get("user", {}).get("message") or
-            payload.get("call", {}).get("transcript") or
-            ""
-        )
+        # Check for different Synthflow payload structures
+        # Synthflow might send data in different formats
         
-        caller_phone = (
-            payload.get("from_number") or 
-            payload.get("phone_number") or
-            payload.get("user", {}).get("phone_number") or
-            payload.get("call", {}).get("from") or
-            None
-        )
+        # Try to extract from root level first
+        caller_message = payload.get("message", "")
+        call_id = payload.get("call_id", "")
+        caller_phone = payload.get("from_number", "")
         
-        # Extract property reference from the message itself if mentioned
+        # If not found, try nested structures
+        if not caller_message:
+            # Try 'input' field (common in Synthflow)
+            caller_message = payload.get("input", "")
+        
+        if not caller_message:
+            # Try 'text' field
+            caller_message = payload.get("text", "")
+        
+        if not caller_message:
+            # Try 'transcript' field
+            caller_message = payload.get("transcript", "")
+        
+        if not caller_message:
+            # Try nested in 'data'
+            data = payload.get("data", {})
+            caller_message = data.get("message", "") or data.get("input", "") or data.get("text", "")
+        
+        if not caller_message:
+            # Try nested in 'user'
+            user = payload.get("user", {})
+            caller_message = user.get("message", "") or user.get("input", "")
+        
+        if not caller_message:
+            # Try nested in 'call'
+            call = payload.get("call", {})
+            caller_message = call.get("transcript", "") or call.get("message", "")
+            if not call_id:
+                call_id = call.get("id", "")
+            if not caller_phone:
+                caller_phone = call.get("from", "")
+        
+        # Log what we extracted
+        logger.info("\nEXTRACTED DATA:")
+        logger.info(f"  Message/Input: '{caller_message}'")
+        logger.info(f"  Call ID: '{call_id}'")
+        logger.info(f"  Phone: '{caller_phone}'")
+        
+        # Extract property reference from the message
         property_reference = None
         if caller_message:
             # Look for addresses in the message
@@ -63,23 +97,27 @@ async def synthflow_webhook(
                         property_reference = match.group(1).strip()
                     else:
                         property_reference = match.group().strip()
+                    logger.info(f"  Extracted Property: '{property_reference}'")
                     break
         
-        # Log everything for debugging
-        logger.info("="*50)
-        logger.info(f"Full Synthflow payload: {json.dumps(payload, indent=2)}")
-        logger.info(f"Extracted - Call ID: {call_id}")
-        logger.info(f"Extracted - Message: {caller_message}")
-        logger.info(f"Extracted - Property: {property_reference}")
-        logger.info(f"Extracted - Phone: {caller_phone}")
-        logger.info("="*50)
+        logger.info("="*60)
         
         # Initialize call handler
         call_handler = CallHandler()
         
+        # If we have a property reference, get the property info directly
+        property_info = None
+        if property_reference:
+            logger.info(f"\nSearching for property: '{property_reference}'")
+            property_info = await call_handler._get_property_info(property_reference)
+            if property_info:
+                logger.info(f"Found property: {property_info.get('address')}")
+            else:
+                logger.info(f"No property found for: '{property_reference}'")
+        
         # Process the caller's message and generate response
         response = await call_handler.process_caller_message(
-            call_id=call_id,
+            call_id=call_id or "synthflow-" + str(datetime.now().timestamp()),
             caller_message=caller_message,
             caller_phone=caller_phone,
             property_reference=property_reference
@@ -89,44 +127,60 @@ async def synthflow_webhook(
         try:
             # Use the basic columns that exist in the database
             call_data = {
+                'call_id': call_id or "synthflow-" + str(datetime.now().timestamp()),
                 'phone_number': caller_phone or 'Unknown',
                 'transcript': caller_message or 'No transcript',
+                'ai_response': response["message"],
+                'property_mentioned': property_reference,
+                'lead_score': 75 if property_reference else 50,
                 'status': 'completed',
                 'duration': 0  # Will be updated when call ends
             }
             
-            # Try to add optional columns if they exist
-            try:
-                call_data['ai_response'] = response["message"]
-                call_data['property_mentioned'] = property_reference
-                call_data['lead_score'] = 75 if property_reference else 50
-            except:
-                pass
-            
             result = call_handler.supabase.table('calls').insert(call_data).execute()
-            logger.info(f"Call saved to database: {result}")
+            logger.info(f"\nCall saved to database with ID: {call_data['call_id']}")
         except Exception as e:
-            logger.error(f"Error saving call to database: {str(e)}")
+            logger.error(f"\nError saving call to database: {str(e)}")
+            logger.error(f"Call data attempted: {json.dumps(call_data, indent=2)}")
         
-        # Return response for Synthflow to speak
-        return {
+        # Build response for Synthflow
+        # Synthflow expects specific format
+        synthflow_response = {
             "success": True,
-            "response": response["message"],
+            "message": response["message"],  # Some Synthflow configs use 'message'
+            "response": response["message"],  # Others use 'response'
+            "text": response["message"],      # Some use 'text'
+            "output": response["message"],    # Some use 'output'
             "actions": response.get("actions", []),
             "metadata": {
                 "call_id": call_id,
-                "property_reference": property_reference
+                "property_reference": property_reference,
+                "property_found": property_info is not None
             }
         }
         
+        logger.info(f"\nRETURNING TO SYNTHFLOW: {json.dumps(synthflow_response, indent=2)}")
+        logger.info("="*60 + "\n")
+        
+        return synthflow_response
+        
     except Exception as e:
-        logger.error(f"Error processing Synthflow webhook: {str(e)}")
+        logger.error(f"\nERROR processing Synthflow webhook: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
         # Return a graceful error response that Synthflow can speak
-        return {
+        error_response = {
             "success": False,
+            "message": "I'm having a bit of trouble right now. Could you please repeat that?",
             "response": "I'm having a bit of trouble right now. Could you please repeat that?",
+            "text": "I'm having a bit of trouble right now. Could you please repeat that?",
+            "output": "I'm having a bit of trouble right now. Could you please repeat that?",
             "error": str(e)
         }
+        logger.info(f"\nRETURNING ERROR TO SYNTHFLOW: {json.dumps(error_response, indent=2)}")
+        return error_response
 
 @router.post("/call-ended")
 async def call_ended_webhook(

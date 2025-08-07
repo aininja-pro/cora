@@ -7,7 +7,7 @@ if os.getenv("APP_ENV") != "production":
     from dotenv import load_dotenv
     load_dotenv()
 
-from .routes import synthflow, agent, voice
+from .routes import synthflow, agent, voice, synthflow_action
 
 app = FastAPI(
     title="CORA API",
@@ -25,6 +25,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(synthflow.router)
+app.include_router(synthflow_action.router)
 app.include_router(agent.router)
 app.include_router(voice.router)
 
