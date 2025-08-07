@@ -25,12 +25,37 @@ async def synthflow_webhook(
     """
     try:
         # Extract call details
-        call_id = payload.get("call_id")
-        caller_message = payload.get("message", "")
-        caller_phone = payload.get("from_number")
-        property_reference = payload.get("metadata", {}).get("property_reference")
+        call_id = payload.get("call_id", payload.get("call", {}).get("id", "unknown"))
         
-        logger.info(f"Synthflow webhook - Call ID: {call_id}, Message: {caller_message}")
+        # Try different possible message fields from Synthflow
+        caller_message = (
+            payload.get("message") or 
+            payload.get("transcript") or 
+            payload.get("user", {}).get("message") or
+            payload.get("call", {}).get("transcript") or
+            ""
+        )
+        
+        caller_phone = (
+            payload.get("from_number") or 
+            payload.get("phone_number") or
+            payload.get("user", {}).get("phone_number") or
+            payload.get("call", {}).get("from") or
+            None
+        )
+        
+        # Extract property reference from the message itself if mentioned
+        property_reference = None
+        if caller_message:
+            # Look for addresses in the message
+            import re
+            address_pattern = r'\d+\s+[\w\s]+(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|place|pl|boulevard|blvd)'
+            match = re.search(address_pattern, caller_message.lower())
+            if match:
+                property_reference = match.group()
+        
+        logger.info(f"Synthflow webhook - Call ID: {call_id}, Message: {caller_message}, Property: {property_reference}")
+        logger.info(f"Full payload: {json.dumps(payload)}")
         
         # Initialize call handler
         call_handler = CallHandler()
