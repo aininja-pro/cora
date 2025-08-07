@@ -68,6 +68,22 @@ async def synthflow_webhook(
             property_reference=property_reference
         )
         
+        # Save call to database for frontend to display
+        try:
+            from ..services.call_handler import CallHandler
+            handler = CallHandler()
+            handler.supabase.table('calls').insert({
+                'call_id': call_id,
+                'phone_number': caller_phone,
+                'transcript': caller_message,
+                'ai_response': response["message"],
+                'property_mentioned': property_reference,
+                'lead_score': 75 if property_reference else 50,  # Higher score if they mention a property
+                'status': 'active'
+            }).execute()
+        except Exception as e:
+            logger.error(f"Error saving call to database: {str(e)}")
+        
         # Return response for Synthflow to speak
         return {
             "success": True,
