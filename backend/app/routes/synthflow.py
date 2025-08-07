@@ -49,14 +49,30 @@ async def synthflow_webhook(
         if caller_message:
             # Look for addresses in the message
             import re
-            address_pattern = r'\d+\s+[\w\s]+(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|court|ct|place|pl|boulevard|blvd)'
-            match = re.search(address_pattern, caller_message.lower())
-            if match:
-                property_reference = match.group()
+            # Try multiple patterns
+            patterns = [
+                r'\d+\s+\w+\s+(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr)',  # With street type
+                r'(?:property at|listing for|interested in)\s+(.+?)(?:\.|,|$)',  # After keywords
+                r'\d+\s+\w+\s+\w+',  # Simple pattern like "123 Main Street"
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, caller_message.lower())
+                if match:
+                    if match.lastindex:  # Has capture group
+                        property_reference = match.group(1).strip()
+                    else:
+                        property_reference = match.group().strip()
+                    break
         
-        # Log the full payload to understand what Synthflow is sending
-        logger.info(f"Full Synthflow payload: {json.dumps(payload)}")
-        logger.info(f"Extracted - Call ID: {call_id}, Message: {caller_message}, Property: {property_reference}")
+        # Log everything for debugging
+        logger.info("="*50)
+        logger.info(f"Full Synthflow payload: {json.dumps(payload, indent=2)}")
+        logger.info(f"Extracted - Call ID: {call_id}")
+        logger.info(f"Extracted - Message: {caller_message}")
+        logger.info(f"Extracted - Property: {property_reference}")
+        logger.info(f"Extracted - Phone: {caller_phone}")
+        logger.info("="*50)
         
         # Initialize call handler
         call_handler = CallHandler()

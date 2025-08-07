@@ -237,26 +237,48 @@ Status: {property_data.get('status', 'active').title()}
         """Fetch property information from database."""
         try:
             # Clean up the property reference
-            property_reference = property_reference.strip().lower()
+            property_reference = property_reference.strip()
+            
+            # Log what we're searching for
+            logger.info(f"Searching for property: '{property_reference}'")
             
             # Try different search strategies
             # 1. Exact match (case-insensitive)
             response = self.supabase.table('listings').select("*").ilike(
-                'address', f'{property_reference}'
+                'address', property_reference
             ).limit(1).execute()
             
             if response.data and len(response.data) > 0:
+                logger.info(f"Found exact match: {response.data[0].get('address')}")
                 return response.data[0]
             
-            # 2. Partial match
+            # 2. Partial match with wildcards
             response = self.supabase.table('listings').select("*").ilike(
                 'address', f'%{property_reference}%'
             ).limit(1).execute()
             
             if response.data and len(response.data) > 0:
+                logger.info(f"Found partial match: {response.data[0].get('address')}")
                 return response.data[0]
             
-            # 3. Try just the street number and first word
+            # 3. Try normalizing the address (remove 'street', 'st', etc)
+            normalized = property_reference.lower()
+            normalized = normalized.replace(' street', '').replace(' st', '')
+            normalized = normalized.replace(' avenue', '').replace(' ave', '')
+            normalized = normalized.replace(' road', '').replace(' rd', '')
+            normalized = normalized.replace(' drive', '').replace(' dr', '')
+            normalized = normalized.replace(' lane', '').replace(' ln', '')
+            
+            if normalized != property_reference.lower():
+                response = self.supabase.table('listings').select("*").ilike(
+                    'address', f'%{normalized}%'
+                ).limit(1).execute()
+                
+                if response.data and len(response.data) > 0:
+                    logger.info(f"Found normalized match: {response.data[0].get('address')}")
+                    return response.data[0]
+            
+            # 4. Try just the street number and first word
             parts = property_reference.split()
             if len(parts) >= 2:
                 simple_search = f"{parts[0]} {parts[1]}"
@@ -265,11 +287,20 @@ Status: {property_data.get('status', 'active').title()}
                 ).limit(1).execute()
                 
                 if response.data and len(response.data) > 0:
+                    logger.info(f"Found simple match: {response.data[0].get('address')}")
                     return response.data[0]
             
+            # 5. Log all available addresses for debugging
+            all_listings = self.supabase.table('listings').select("address").limit(10).execute()
+            if all_listings.data:
+                addresses = [item.get('address') for item in all_listings.data]
+                logger.info(f"Available addresses in database: {addresses}")
+            
+            logger.warning(f"No property found for: '{property_reference}'")
             return None
         except Exception as e:
             logger.error(f"Error fetching property info: {str(e)}")
+            logger.error(f"Error details: {e.__class__.__name__}")
             return None
     
     async def _get_all_properties(self) -> List[Dict]:
