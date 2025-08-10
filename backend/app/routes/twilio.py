@@ -91,8 +91,8 @@ async def process_speech(
             form_dict.get('From', '')
         )
         
-        # For now, use simple response logic
-        twiml_response = twilio_service.process_speech(form_dict)
+        # Process with GPT-4 enhanced response
+        twiml_response = await twilio_service.process_speech(form_dict)
         
         return Response(
             content=twiml_response,

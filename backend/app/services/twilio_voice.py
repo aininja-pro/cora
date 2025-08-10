@@ -20,8 +20,9 @@ class TwilioVoiceService:
     
     def __init__(self):
         # Twilio credentials (you'll need to sign up at twilio.com)
-        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID", "")
-        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN", "")
+        # Support both naming conventions
+        self.account_sid = os.getenv("TWILIO_ACCOUNT_SID") or os.getenv("TWILIO_SID", "")
+        self.auth_token = os.getenv("TWILIO_AUTH_TOKEN") or os.getenv("TWILIO_TOKEN", "")
         self.phone_number = os.getenv("TWILIO_PHONE_NUMBER", "")
         
         # Initialize Twilio client only if credentials exist
@@ -101,7 +102,7 @@ class TwilioVoiceService:
         
         return str(response)
     
-    def process_speech(self, form_data: Dict[str, Any]) -> str:
+    async def process_speech(self, form_data: Dict[str, Any]) -> str:
         """
         Process speech from the caller
         This is called when Twilio captures what the caller said
@@ -127,8 +128,8 @@ class TwilioVoiceService:
             'confidence': float(confidence)
         })
         
-        # Generate AI response (we'll enhance this next)
-        ai_response = self._generate_response(speech_result, call_data)
+        # Generate AI response using GPT-4
+        ai_response = await self._generate_response(speech_result, call_data)
         
         # Add AI response to transcript
         call_data['transcript'].append({
@@ -225,42 +226,97 @@ class TwilioVoiceService:
         )
         response.redirect('/api/twilio/incoming-call')
     
-    def _generate_response(self, user_message: str, call_data: Dict) -> str:
+    async def _generate_response(self, user_message: str, call_data: Dict) -> str:
         """
-        Generate AI response based on what the caller said
-        For now, this is a simple response - we'll add GPT-4 next
+        Generate AI response using GPT-4
         """
+        import openai
+        import re
+        
+        # Initialize OpenAI client
+        openai_client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # Extract property reference if mentioned
+        property_info = None
         message_lower = user_message.lower()
         
-        # Check for property mentions
+        # Look for property addresses
+        property_data = {}
         if '123 main' in message_lower:
-            return (
-                "Yes! 123 Main Street is a beautiful 3 bedroom, 2 and a half bath home "
-                "in downtown Austin. It's priced at 489 thousand dollars and features "
-                "granite countertops and hardwood floors. Would you like to schedule a showing?"
-            )
+            property_data = {
+                "address": "123 Main Street, Austin, TX 78701",
+                "price": "$489,000",
+                "bedrooms": 3,
+                "bathrooms": 2.5,
+                "sqft": 2200,
+                "features": "Modern kitchen with granite countertops, hardwood floors, spacious fenced backyard with custom patio"
+            }
         elif '456 oak' in message_lower:
-            return (
-                "456 Oak Avenue is a charming 2 bedroom, 2 bath condo priced at "
-                "325 thousand dollars. It's perfect for first-time buyers. "
-                "Would you like more details or shall we set up a viewing?"
+            property_data = {
+                "address": "456 Oak Avenue, Austin, TX 78704",
+                "price": "$325,000",
+                "bedrooms": 2,
+                "bathrooms": 2,
+                "sqft": 1500,
+                "features": "Recently renovated condo, stainless steel appliances, rooftop access"
+            }
+        elif '789 pine' in message_lower:
+            property_data = {
+                "address": "789 Pine Lane, Austin, TX 78703",
+                "price": "$750,000",
+                "bedrooms": 4,
+                "bathrooms": 3,
+                "sqft": 3500,
+                "features": "Luxury home with pool, smart home features, three-car garage"
+            }
+        
+        # Build system prompt
+        system_prompt = """You are Cora, a warm and professional AI real estate assistant handling phone calls.
+        Keep responses conversational and concise (2-3 sentences max) since this is a phone call.
+        Be helpful, friendly, and proactive in offering assistance like scheduling showings or sending information.
+        
+        Important guidelines:
+        - Speak naturally as if on a phone call
+        - Keep responses brief and to the point
+        - Ask clarifying questions when needed
+        - Offer to schedule showings when appropriate
+        - Be enthusiastic about properties"""
+        
+        if property_data:
+            system_prompt += f"\n\nProperty Details:\n{json.dumps(property_data, indent=2)}"
+        
+        # Get conversation history
+        transcript = call_data.get('transcript', [])
+        
+        # Build messages for GPT-4
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add recent conversation history (last 5 exchanges)
+        for entry in transcript[-10:]:
+            role = "assistant" if entry['speaker'] == 'cora' else "user"
+            messages.append({"role": role, "content": entry['text']})
+        
+        # Add current message
+        messages.append({"role": "user", "content": user_message})
+        
+        try:
+            # Call GPT-4
+            response = await openai_client.chat.completions.create(
+                model="gpt-4-turbo-preview",
+                messages=messages,
+                max_tokens=150,
+                temperature=0.7
             )
-        elif 'schedule' in message_lower or 'showing' in message_lower:
-            return (
-                "I'd be happy to schedule a showing for you. We have availability "
-                "tomorrow at 2 PM or Thursday at 10 AM. Which works better for you?"
-            )
-        elif 'thank' in message_lower or 'bye' in message_lower:
-            return (
-                "You're welcome! Feel free to call anytime if you have more questions. "
-                "Have a great day!"
-            )
-        else:
-            return (
-                "I can help you with information about our available properties, "
-                "scheduling showings, or answering questions about the buying process. "
-                "What would you like to know?"
-            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Error calling GPT-4: {e}")
+            # Fallback to simple response
+            if property_data:
+                return f"I'd be happy to tell you about {property_data['address']}. It's a {property_data['bedrooms']} bedroom home priced at {property_data['price']}. Would you like to schedule a showing?"
+            else:
+                return "I can help you find the perfect property. What are you looking for?"
     
     def make_outbound_call(self, to_number: str, message: str) -> Dict:
         """
