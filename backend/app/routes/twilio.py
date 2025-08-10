@@ -30,6 +30,10 @@ async def handle_incoming_call(request: Request):
         form_data = await request.form()
         form_dict = dict(form_data)
         
+        # If form_data is empty, log the issue
+        if not form_dict:
+            logger.warning("Empty form data received from Twilio")
+        
         # Log incoming call details
         logger.info("="*60)
         logger.info("📞 NEW INCOMING CALL")
