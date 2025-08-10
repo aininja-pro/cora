@@ -189,11 +189,7 @@ async def synthflow_webhook(
                 'property_mentioned': property_reference,
                 'lead_score': 75 if property_reference else 50,
                 'status': 'in_progress',  # Mark as in_progress until call ends
-                'duration': 0,  # Will be updated when call ends
-                'metadata': {
-                    'current_message': caller_message,
-                    'has_full_transcript': bool(full_transcript)
-                }
+                'duration': 0  # Will be updated when call ends
             }
             
             result = call_handler.supabase.table('calls').insert(call_data).execute()
@@ -346,23 +342,8 @@ async def call_ended_webhook(
                 if full_transcript:
                     update_data['transcript'] = full_transcript
                 
-                # Add recording URL if available
-                if recording_url:
-                    if not update_data.get('metadata'):
-                        update_data['metadata'] = {}
-                    update_data['metadata']['recording_url'] = recording_url
-                
-                # Add summary if available
-                if call_summary:
-                    if not update_data.get('metadata'):
-                        update_data['metadata'] = {}
-                    update_data['metadata']['summary'] = call_summary
-                
-                # Add extracted data
-                if extracted_data:
-                    if not update_data.get('metadata'):
-                        update_data['metadata'] = {}
-                    update_data['metadata']['extracted'] = extracted_data
+                # Note: The calls table doesn't have a metadata column
+                # We'll need to store this data differently or add the column later
                 
                 # Update the call record
                 result = call_handler.supabase.table('calls').update(update_data).eq('call_id', call_id).execute()
@@ -376,12 +357,7 @@ async def call_ended_webhook(
                         'phone_number': caller_phone or 'Unknown',
                         'transcript': full_transcript or 'No transcript available',
                         'status': 'completed',
-                        'duration': duration,
-                        'metadata': {
-                            'recording_url': recording_url,
-                            'summary': call_summary,
-                            'extracted': extracted_data
-                        }
+                        'duration': duration
                     }
                     result = call_handler.supabase.table('calls').insert(call_data).execute()
                     logger.info(f"\nNew call record created for ID: {call_id}")
