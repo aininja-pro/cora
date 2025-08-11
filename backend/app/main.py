@@ -7,7 +7,7 @@ if os.getenv("APP_ENV") != "production":
     from dotenv import load_dotenv
     load_dotenv()
 
-from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple, synthflow_debug, synthflow_catch_all, synthflow_properties, twilio, twilio_simple, twilio_working, twilio_basic, twilio_static, twilio_elevenlabs
+from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple, synthflow_debug, synthflow_catch_all, synthflow_properties, twilio, twilio_simple, twilio_working, twilio_basic, twilio_static, twilio_elevenlabs, twilio_polly
 
 app = FastAPI(
     title="CORA API",
@@ -38,6 +38,7 @@ app.include_router(twilio_working.router)  # Working version with speech
 app.include_router(twilio_basic.router)  # Most basic version
 app.include_router(twilio_static.router)  # Static response - guaranteed to work!
 app.include_router(twilio_elevenlabs.router)  # ElevenLabs high-quality voice
+app.include_router(twilio_polly.router)  # Amazon Polly voices via Twilio
 
 @app.get("/")
 async def root():

@@ -1,101 +1,24 @@
 """
-Twilio webhook with ElevenLabs for high-quality AI voice
+Twilio webhook with Amazon Polly voices (built into Twilio)
+Better quality than basic Twilio, without external API calls
 """
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 import logging
-import os
-import httpx
-import base64
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/twilio-elevenlabs", tags=["twilio-elevenlabs"])
-
-# ElevenLabs configuration
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
-
-# Popular ElevenLabs voice IDs
-VOICES = {
-    "rachel": "21m00Tcm4TlvDq8ikWAM",  # Clear American female
-    "adam": "pNInz6obpgDQGcFmaJgB",    # Deep American male
-    "bella": "EXAVITQu4vr4xnSDxMaL",   # Soft American female
-    "antoni": "ErXwobaYiN019PkySvjV",  # Well-rounded American male
-    "elli": "MF3mGyEYCl7XYWbV9V6O",    # Young American female
-    "josh": "TxGEqnHWrfWFTfGW9XjX",    # Young American male
-    "arnold": "VR6AewLTigWG4xSOukaG",  # Crisp American male
-    "domi": "AZnzlk1XvdvUeBnXmlld",    # Strong American female
-}
+router = APIRouter(prefix="/api/twilio-polly", tags=["twilio-polly"])
 
 # Store active calls
 active_calls = {}
 
-async def generate_elevenlabs_audio(text: str, voice_id: str = None) -> str:
-    """
-    Generate audio from text using ElevenLabs API
-    Returns base64-encoded audio
-    """
-    if not ELEVENLABS_API_KEY:
-        logger.error("ElevenLabs API key not configured")
-        return None
-    
-    # Use Rachel voice by default (professional and clear)
-    if not voice_id:
-        voice_id = VOICES["rachel"]
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            # Add User-Agent and additional headers to avoid abuse detection
-            headers = {
-                "xi-api-key": ELEVENLABS_API_KEY,
-                "Content-Type": "application/json",
-                "User-Agent": "CORA-RealEstate-Assistant/1.0",
-                "Accept": "audio/mpeg",
-            }
-            
-            # Use simpler model to avoid abuse detection
-            response = await client.post(
-                f"{ELEVENLABS_API_URL}/text-to-speech/{voice_id}/stream",
-                headers=headers,
-                json={
-                    "text": text,
-                    "model_id": "eleven_turbo_v2",  # Faster, less likely to trigger abuse
-                    "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.75,
-                    }
-                },
-                timeout=10.0
-            )
-            
-            if response.status_code == 200:
-                # Return base64-encoded audio
-                audio_content = response.content
-                return base64.b64encode(audio_content).decode('utf-8')
-            elif response.status_code == 401:
-                logger.error("ElevenLabs API key invalid or expired")
-                return None
-            elif "abuse" in response.text.lower():
-                logger.warning("ElevenLabs abuse detection triggered - using fallback")
-                return None
-            else:
-                logger.error(f"ElevenLabs API error: {response.status_code} - {response.text}")
-                return None
-                
-    except httpx.TimeoutException:
-        logger.warning("ElevenLabs request timed out - using fallback")
-        return None
-    except Exception as e:
-        logger.error(f"Error generating ElevenLabs audio: {str(e)}")
-        return None
-
 @router.post("/voice")
-async def handle_voice_with_elevenlabs(request: Request):
+async def handle_voice_with_polly(request: Request):
     """
-    Handle incoming call with ElevenLabs TTS
+    Handle incoming call with Amazon Polly voices (via Twilio)
     """
     try:
         # Get form data
@@ -118,43 +41,25 @@ async def handle_voice_with_elevenlabs(request: Request):
             'started': datetime.now().isoformat()
         }
         
-        # Generate welcome message with ElevenLabs
-        welcome_text = (
-            "Hello! This is Cora from your real estate team. "
-            "I'm here to help you find your dream property. "
-            "What type of home are you looking for today?"
-        )
-        
-        audio_base64 = await generate_elevenlabs_audio(welcome_text)
-        
-        if audio_base64:
-            # Use ElevenLabs audio
-            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        # Use Amazon Polly voices through Twilio
+        # Available Polly voices: Joanna, Matthew, Ivy, Justin, Kendra, Kimberly, Salli, Joey, Amy, Brian
+        twiml = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Play>data:audio/mpeg;base64,{audio_base64}</Play>
+    <Say voice="Polly.Joanna">
+        <prosody rate="95%" pitch="-2%">
+            Hello! This is Cora from your real estate team. 
+            I'm here to help you find your dream property. 
+            What type of home are you looking for today?
+        </prosody>
+    </Say>
     <Gather input="speech" 
-            action="/api/twilio-elevenlabs/process-speech" 
+            action="/api/twilio-polly/process-speech" 
             method="POST"
             speechTimeout="auto"
             language="en-US">
-        <Pause length="3"/>
+        <Say voice="Polly.Joanna">I'm listening...</Say>
     </Gather>
-    <Say voice="alice">I didn't hear anything. Please call back if you need help.</Say>
-</Response>"""
-        else:
-            # Fallback to Twilio's voice if ElevenLabs fails
-            logger.warning("Falling back to Twilio voice")
-            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="alice">{welcome_text}</Say>
-    <Gather input="speech" 
-            action="/api/twilio-elevenlabs/process-speech" 
-            method="POST"
-            speechTimeout="auto"
-            language="en-US">
-        <Say>I'm listening...</Say>
-    </Gather>
-    <Say>I didn't hear anything. Please call back if you need help.</Say>
+    <Say voice="Polly.Joanna">I didn't hear anything. Please call back if you need help.</Say>
 </Response>"""
         
         return Response(content=twiml, media_type="application/xml")
@@ -163,14 +68,14 @@ async def handle_voice_with_elevenlabs(request: Request):
         logger.error(f"Error in voice handler: {str(e)}")
         error_twiml = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say voice="alice">I apologize for the technical difficulty. Please try again later.</Say>
+    <Say voice="Polly.Joanna">I apologize for the technical difficulty. Please try again later.</Say>
 </Response>"""
         return Response(content=error_twiml, media_type="application/xml")
 
 @router.post("/process-speech")
-async def process_speech_with_elevenlabs(request: Request):
+async def process_speech_with_polly(request: Request):
     """
-    Process speech input and respond with ElevenLabs voice
+    Process speech input and respond with Polly voice
     """
     try:
         form_data = await request.form()
@@ -185,34 +90,30 @@ async def process_speech_with_elevenlabs(request: Request):
         # Generate contextual response
         response_text = generate_property_response(speech_result)
         
-        # Generate audio with ElevenLabs
-        audio_base64 = await generate_elevenlabs_audio(response_text)
-        
-        if audio_base64:
-            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+        # Use Polly voice with prosody for more natural speech
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Play>data:audio/mpeg;base64,{audio_base64}</Play>
+    <Say voice="Polly.Joanna">
+        <prosody rate="95%" pitch="-2%">
+            {response_text}
+        </prosody>
+    </Say>
     <Gather input="speech" 
-            action="/api/twilio-elevenlabs/process-speech" 
+            action="/api/twilio-polly/process-speech" 
             method="POST"
             speechTimeout="auto"
             language="en-US">
-        <Pause length="2"/>
+        <Say voice="Polly.Joanna">
+            <prosody rate="90%">
+                Is there anything else I can help you with?
+            </prosody>
+        </Say>
     </Gather>
-    <Play>data:audio/mpeg;base64,{await generate_elevenlabs_audio("Thank you for calling. Have a wonderful day!")}</Play>
-</Response>"""
-        else:
-            # Fallback
-            twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="alice">{response_text}</Say>
-    <Gather input="speech" 
-            action="/api/twilio-elevenlabs/process-speech" 
-            method="POST"
-            speechTimeout="auto">
-        <Say>Is there anything else?</Say>
-    </Gather>
-    <Say>Thank you for calling!</Say>
+    <Say voice="Polly.Joanna">
+        <prosody rate="95%" pitch="-1%">
+            Thank you for calling. Have a wonderful day!
+        </prosody>
+    </Say>
 </Response>"""
         
         return Response(content=twiml, media_type="application/xml")
@@ -221,7 +122,7 @@ async def process_speech_with_elevenlabs(request: Request):
         logger.error(f"Error processing speech: {str(e)}")
         fallback_twiml = """<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Say>I didn't understand that. Could you please repeat?</Say>
+    <Say voice="Polly.Joanna">I didn't understand that. Could you please repeat?</Say>
 </Response>"""
         return Response(content=fallback_twiml, media_type="application/xml")
 
@@ -320,25 +221,7 @@ async def test_endpoint():
     """Test endpoint"""
     return {
         "status": "ready",
-        "elevenlabs_configured": bool(ELEVENLABS_API_KEY),
-        "available_voices": list(VOICES.keys())
+        "voice": "Amazon Polly (Joanna)",
+        "quality": "High quality neural voice",
+        "cost": "Included with Twilio"
     }
-
-@router.get("/test-voice/{voice_name}")
-async def test_voice(voice_name: str):
-    """Test a specific ElevenLabs voice"""
-    if voice_name not in VOICES:
-        return {"error": f"Voice '{voice_name}' not found. Available: {list(VOICES.keys())}"}
-    
-    test_text = "Hello! This is a test of the ElevenLabs voice synthesis."
-    audio_base64 = await generate_elevenlabs_audio(test_text, VOICES[voice_name])
-    
-    if audio_base64:
-        return {
-            "success": True,
-            "voice": voice_name,
-            "voice_id": VOICES[voice_name],
-            "audio_length": len(audio_base64)
-        }
-    else:
-        return {"error": "Failed to generate audio"}
