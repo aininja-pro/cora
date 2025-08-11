@@ -3,7 +3,7 @@ Basic Twilio webhook - minimal dependencies
 This will definitely work!
 """
 
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 import logging
 
