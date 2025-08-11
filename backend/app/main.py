@@ -11,8 +11,8 @@ from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple,
 
 app = FastAPI(
     title="CORA API",
-    description="AI Voice Assistant for Real Estate Agents",
-    version="1.0.0"
+    description="AI Voice Assistant for Real Estate Agents with ElevenLabs",
+    version="1.1.0"
 )
 
 app.add_middleware(
