@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/twilio-relay", tags=["twilio-conversation-relay"])
 
+# Store active calls for tracking
+active_calls = {}
+
 # ElevenLabs Voice IDs for ConversationRelay
 ELEVENLABS_VOICES = {
     "rachel": "21m00Tcm4TlvDq8ikWAM",     # Professional female
@@ -95,8 +98,20 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     await websocket.accept()
     
+    call_sid = None
+    transcript = []
+    
     try:
         logger.info("WebSocket connection established for ConversationRelay")
+        
+        # Try to save call info if database is available
+        try:
+            from ..services.supabase_service import SupabaseService
+            db = SupabaseService()
+            logger.info("Database service initialized for call tracking")
+        except Exception as e:
+            logger.warning(f"Database not available for call tracking: {e}")
+            db = None
         
         while True:
             # Receive message from Twilio
@@ -115,6 +130,21 @@ async def websocket_endpoint(websocket: WebSocket):
             if event_type == "setup":
                 # Initial setup from Twilio
                 logger.info(f"Setup received: {data}")
+                call_sid = data.get("callSid", "unknown")
+                
+                # Try to create call record in database
+                if db and call_sid:
+                    try:
+                        call_record = await db.create_call(
+                            phone_number=data.get("from", "unknown"),
+                            call_sid=call_sid,
+                            direction="inbound"
+                        )
+                        active_calls[call_sid] = call_record.get("id")
+                        logger.info(f"Call record created: {call_record.get('id')}")
+                    except Exception as e:
+                        logger.warning(f"Could not create call record: {e}")
+                
                 # Send ready signal
                 await websocket.send_text(json.dumps({
                     "type": "setup",
@@ -123,11 +153,41 @@ async def websocket_endpoint(websocket: WebSocket):
                 
             elif event_type == "prompt":
                 # User spoke something
-                transcript = data.get("voicePrompt", "")
-                logger.info(f"User said: {transcript}")
+                user_message = data.get("voicePrompt", "")
+                logger.info(f"User said: {user_message}")
+                
+                # Add to transcript
+                transcript.append({"speaker": "user", "message": user_message})
+                
+                # Save to database if available
+                if db and call_sid in active_calls:
+                    try:
+                        await db.add_transcript_entry(
+                            call_id=active_calls[call_sid],
+                            speaker="user",
+                            message=user_message,
+                            sequence_number=len(transcript)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not save transcript: {e}")
                 
                 # Generate response based on what user said
-                response_text = generate_property_response(transcript)
+                response_text = generate_property_response(user_message)
+                
+                # Add assistant response to transcript
+                transcript.append({"speaker": "assistant", "message": response_text})
+                
+                # Save assistant response to database if available
+                if db and call_sid in active_calls:
+                    try:
+                        await db.add_transcript_entry(
+                            call_id=active_calls[call_sid],
+                            speaker="assistant",
+                            message=response_text,
+                            sequence_number=len(transcript)
+                        )
+                    except Exception as e:
+                        logger.warning(f"Could not save transcript: {e}")
                 
                 # Send response back to Twilio
                 # ConversationRelay handles the TTS with ElevenLabs automatically
@@ -152,6 +212,22 @@ async def websocket_endpoint(websocket: WebSocket):
             elif event_type == "end":
                 # Call ended
                 logger.info("Call ended")
+                
+                # Save final transcript to database if available
+                if db and call_sid in active_calls:
+                    try:
+                        full_transcript = "\n".join([
+                            f"{t['speaker'].upper()}: {t['message']}"
+                            for t in transcript
+                        ])
+                        await db.end_call(
+                            call_id=active_calls[call_sid],
+                            transcript=full_transcript
+                        )
+                        logger.info(f"Call data saved for {call_sid}")
+                    except Exception as e:
+                        logger.warning(f"Could not save final call data: {e}")
+                
                 break
                 
     except Exception as e:
