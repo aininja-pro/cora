@@ -7,7 +7,9 @@ if os.getenv("APP_ENV") != "production":
     from dotenv import load_dotenv
     load_dotenv()
 
-from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple, synthflow_debug, synthflow_catch_all, synthflow_properties, twilio, twilio_simple, twilio_working, twilio_basic, twilio_static, twilio_elevenlabs, twilio_polly, twilio_polly_simple, twilio_conversation_relay
+from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple, synthflow_debug, synthflow_catch_all, synthflow_properties, twilio, twilio_simple, twilio_working, twilio_basic, twilio_static, twilio_elevenlabs, twilio_polly, twilio_polly_simple
+from .routes import twilio_conversation_relay_enhanced as twilio_conversation_relay  # Use enhanced version
+from .routes import calls_api
 
 app = FastAPI(
     title="CORA API",
@@ -40,7 +42,8 @@ app.include_router(twilio_static.router)  # Static response - guaranteed to work
 app.include_router(twilio_elevenlabs.router)  # ElevenLabs high-quality voice
 app.include_router(twilio_polly.router)  # Amazon Polly voices via Twilio
 app.include_router(twilio_polly_simple.router)  # Simple Polly without form parsing
-app.include_router(twilio_conversation_relay.router)  # ConversationRelay with ElevenLabs (Official)
+app.include_router(twilio_conversation_relay.router)  # Enhanced ConversationRelay with call capture (replaced original)
+app.include_router(calls_api.router)  # API for retrieving call data
 
 @app.get("/")
 async def root():
