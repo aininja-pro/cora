@@ -23,10 +23,10 @@ ELEVENLABS_VOICES = {
     "amelia": "ZF6FPAbjXT4488VcRRnw",     # British female
 }
 
-# ElevenLabs models
+# ElevenLabs models - Using exact IDs from Twilio documentation
 MODELS = {
-    "flash": "flash_v2_5",      # Fastest, lowest latency
-    "turbo": "turbo_v2_5",      # Fast with good quality
+    "flash": "flash_v2_5",      # Fastest, lowest latency (default)
+    "turbo": "turbo_v2_5",      # Better quality, slightly more latency
     "standard": "eleven_monolingual_v1",  # High quality
 }
 
@@ -51,9 +51,10 @@ async def handle_twiml_get(request: Request):
         
         # Configure ElevenLabs voice with ConversationRelay
         # Format: VoiceID-Model-Speed_Stability_Similarity
-        voice_config = f"{ELEVENLABS_VOICES['rachel']}-{MODELS['turbo']}-1.0_0.5_0.75"
+        # Using Rachel voice with flash model for best performance
+        voice_config = f"{ELEVENLABS_VOICES['rachel']}-{MODELS['flash']}-1.0_0.8_0.8"
         
-        # Create TwiML with ConversationRelay
+        # Create TwiML with ConversationRelay - exactly like the tutorial
         twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
@@ -62,8 +63,6 @@ async def handle_twiml_get(request: Request):
             ttsProvider="ElevenLabs"
             voice="{voice_config}"
             elevenlabsTextNormalization="on"
-            transcriptionProvider="Deepgram"
-            speechModel="nova-2"
             welcomeGreeting="Hello! This is Cora from your real estate team. I'm here to help you find your dream property. What type of home are you looking for today?"
         />
     </Connect>
