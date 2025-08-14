@@ -1,0 +1,316 @@
+"""
+Twilio ConversationRelay with ElevenLabs integration
+Official way to use ElevenLabs with Twilio
+"""
+
+from fastapi import APIRouter, Request, WebSocket
+from fastapi.responses import Response
+import logging
+import os
+from datetime import datetime
+import json
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/twilio-relay", tags=["twilio-conversation-relay"])
+
+# ElevenLabs Voice IDs for ConversationRelay
+ELEVENLABS_VOICES = {
+    "rachel": "21m00Tcm4TlvDq8ikWAM",     # Professional female
+    "adam": "pNInz6obpgDQGcFmaJgB",       # Deep male
+    "bella": "EXAVITQu4vr4xnSDxMaL",      # Soft female
+    "antoni": "ErXwobaYiN019PkySvjV",     # Well-rounded male
+    "amelia": "ZF6FPAbjXT4488VcRRnw",     # British female
+}
+
+# ElevenLabs models
+MODELS = {
+    "flash": "flash_v2_5",      # Fastest, lowest latency
+    "turbo": "turbo_v2_5",      # Fast with good quality
+    "standard": "eleven_monolingual_v1",  # High quality
+}
+
+@router.post("/voice")
+async def handle_voice_with_relay(request: Request):
+    """
+    Handle incoming call using ConversationRelay with ElevenLabs
+    This is the official Twilio way to use ElevenLabs
+    """
+    try:
+        # Get form data
+        form_data = await request.form()
+        form_dict = dict(form_data)
+        
+        from_number = form_dict.get('From', 'Unknown')
+        from_city = form_dict.get('FromCity', 'Unknown')
+        from_state = form_dict.get('FromState', 'Unknown')
+        
+        logger.info(f"📞 Incoming call from {from_number} ({from_city}, {from_state})")
+        
+        # Get base URL for WebSocket
+        base_url = str(request.url).replace('http://', 'wss://').replace('https://', 'wss://').split('/api/')[0]
+        websocket_url = f"{base_url}/api/twilio-relay/websocket"
+        
+        # Configure ElevenLabs voice with ConversationRelay
+        # Format: VoiceID-Model-Speed_Stability_Similarity
+        voice_config = f"{ELEVENLABS_VOICES['rachel']}-{MODELS['turbo']}-1.0_0.5_0.75"
+        
+        # Create TwiML with ConversationRelay
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <ConversationRelay 
+            url="{websocket_url}"
+            ttsProvider="ElevenLabs"
+            voice="{voice_config}"
+            elevenlabsTextNormalization="on"
+            transcriptionProvider="Deepgram"
+            speechModel="nova-2"
+            welcomeGreeting="Hello! This is Cora from your real estate team. I'm here to help you find your dream property. What type of home are you looking for today?"
+        />
+    </Connect>
+</Response>"""
+        
+        return Response(content=twiml, media_type="application/xml")
+        
+    except Exception as e:
+        logger.error(f"Error in ConversationRelay handler: {str(e)}")
+        # Fallback to simple response
+        error_twiml = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Joanna">I apologize for the technical difficulty. Please try again later.</Say>
+</Response>"""
+        return Response(content=error_twiml, media_type="application/xml")
+
+@router.websocket("/websocket")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for ConversationRelay
+    Handles real-time conversation between Twilio and AI
+    """
+    await websocket.accept()
+    
+    try:
+        logger.info("WebSocket connection established")
+        
+        while True:
+            # Receive message from Twilio
+            data = await websocket.receive_json()
+            event_type = data.get("type")
+            
+            if event_type == "setup":
+                # Initial setup from Twilio
+                logger.info(f"Setup received: {data}")
+                
+            elif event_type == "prompt":
+                # User spoke something
+                transcript = data.get("voicePrompt", "")
+                logger.info(f"User said: {transcript}")
+                
+                # Generate response based on what user said
+                response_text = generate_property_response(transcript)
+                
+                # Send response back to Twilio
+                # ConversationRelay handles the TTS with ElevenLabs automatically
+                await websocket.send_json({
+                    "type": "text",
+                    "token": response_text
+                })
+                
+            elif event_type == "interrupt":
+                # User interrupted the AI
+                logger.info("User interrupted")
+                
+            elif event_type == "dtmf":
+                # User pressed a key
+                digit = data.get("digit")
+                logger.info(f"User pressed: {digit}")
+                
+            elif event_type == "end":
+                # Call ended
+                logger.info("Call ended")
+                break
+                
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+    finally:
+        await websocket.close()
+
+def generate_property_response(user_message: str) -> str:
+    """
+    Generate contextual property responses
+    In production, this would use GPT-4 or another LLM
+    """
+    if not user_message:
+        return "I'm sorry, I didn't catch that. Could you please repeat?"
+    
+    message_lower = user_message.lower()
+    
+    # Greeting
+    if any(word in message_lower for word in ['hello', 'hi', 'hey', 'good morning', 'good afternoon']):
+        return (
+            "Hello! I'm excited to help you find your perfect home. "
+            "We have several beautiful properties available. "
+            "Are you looking for something specific, like a certain number of bedrooms "
+            "or a particular neighborhood?"
+        )
+    
+    # Property inquiries
+    elif '123 main' in message_lower or 'main street' in message_lower:
+        return (
+            "Oh, you're interested in 123 Main Street! That's one of my favorites. "
+            "It's a stunning 3-bedroom home with beautiful hardwood floors and granite countertops. "
+            "The kitchen was just renovated last year. At 489 thousand, it's perfectly priced "
+            "for the downtown Austin market. Would you like to schedule a private showing this week?"
+        )
+    
+    elif '456 oak' in message_lower or 'oak avenue' in message_lower:
+        return (
+            "456 Oak Avenue is a fantastic choice! It's a modern 2-bedroom condo "
+            "that was just renovated last year. At 325 thousand, it's ideal for "
+            "first-time buyers or anyone looking for a low-maintenance lifestyle. "
+            "The HOA covers all exterior maintenance and landscaping. "
+            "I can arrange a tour as early as tomorrow if you'd like."
+        )
+    
+    elif '789 pine' in message_lower or 'pine lane' in message_lower:
+        return (
+            "Excellent taste! 789 Pine Lane is our premier luxury listing. "
+            "This 4-bedroom estate features a resort-style pool, smart home technology, "
+            "and breathtaking hill country views. The master suite alone is 800 square feet. "
+            "At 750 thousand, it offers exceptional value for a property of this caliber. "
+            "When would you like to see it?"
+        )
+    
+    # Feature inquiries
+    elif any(word in message_lower for word in ['bedrooms', 'beds', 'bedroom']):
+        if '2' in message_lower or 'two' in message_lower:
+            return (
+                "For 2-bedroom properties, I'd highly recommend 456 Oak Avenue. "
+                "It's a beautifully renovated condo at 325 thousand with modern finishes, "
+                "stainless steel appliances, and a great location near shopping and dining. "
+                "Would you like more details about this property?"
+            )
+        elif '3' in message_lower or 'three' in message_lower:
+            return (
+                "For 3 bedrooms, 123 Main Street would be perfect for you. "
+                "It's in the heart of downtown Austin with original hardwood floors throughout, "
+                "a spacious backyard, and it's priced at 489 thousand. "
+                "Should I tell you more about the neighborhood and schools?"
+            )
+        elif '4' in message_lower or 'four' in message_lower:
+            return (
+                "For 4 bedrooms, you'll absolutely love 789 Pine Lane. "
+                "It's our luxury listing with a pool, three-car garage, and smart home features. "
+                "The property sits on half an acre with mature trees. It's priced at 750 thousand. "
+                "Would you like to schedule a tour?"
+            )
+        else:
+            return (
+                "We have homes ranging from cozy 2-bedroom condos to spacious 4-bedroom estates. "
+                "Our 2-bedroom at Oak Avenue is 325 thousand, "
+                "the 3-bedroom on Main Street is 489 thousand, "
+                "and our luxury 4-bedroom on Pine Lane is 750 thousand. "
+                "Which size would work best for your needs?"
+            )
+    
+    # Pool inquiry
+    elif any(word in message_lower for word in ['pool', 'swimming']):
+        return (
+            "If a pool is important to you, 789 Pine Lane is your best option. "
+            "It has a beautiful resort-style pool with a spa and waterfall feature, "
+            "perfect for Austin summers. The pool area also has an outdoor kitchen. "
+            "The home is priced at 750 thousand. Would you like to see it this week?"
+        )
+    
+    # Price/budget inquiry
+    elif any(word in message_lower for word in ['price', 'cost', 'budget', 'afford', 'expensive', 'cheap']):
+        return (
+            "We have excellent options across different price points. "
+            "Starting at 325 thousand for a modern 2-bedroom condo on Oak Avenue, "
+            "489 thousand for a charming 3-bedroom home on Main Street, "
+            "and 750 thousand for a luxury 4-bedroom estate on Pine Lane. "
+            "What's your ideal price range? I can also look for other properties that might fit your budget."
+        )
+    
+    # Scheduling inquiry
+    elif any(word in message_lower for word in ['schedule', 'showing', 'tour', 'visit', 'see', 'appointment']):
+        return (
+            "I'd be delighted to schedule a showing for you! "
+            "I have availability tomorrow afternoon, Thursday morning, or this weekend. "
+            "Which property would you like to see first, and what time works best for you? "
+            "I can also arrange virtual tours if you prefer to start there."
+        )
+    
+    # Location inquiry
+    elif any(word in message_lower for word in ['location', 'where', 'area', 'neighborhood', 'school']):
+        return (
+            "All three properties are in excellent Austin neighborhoods. "
+            "123 Main Street is right downtown, walking distance to restaurants and entertainment. "
+            "456 Oak Avenue is in a quiet residential area with top-rated schools nearby. "
+            "789 Pine Lane offers hill country views with easy access to Highway 71. "
+            "Which location appeals to you most? I can tell you more about any of these areas."
+        )
+    
+    # Thank you / Goodbye
+    elif any(word in message_lower for word in ['thank', 'thanks', 'bye', 'goodbye', 'take care']):
+        return (
+            "It's been my absolute pleasure helping you today! "
+            "Please don't hesitate to call back anytime - I'm here to help you find your perfect home. "
+            "If you'd like, I can also send you detailed information about any of these properties by email. "
+            "Have a wonderful day!"
+        )
+    
+    # Default response
+    else:
+        return (
+            "That's a great question! Let me help you with that. "
+            "We currently have three beautiful properties available: "
+            "a 2-bedroom condo, a 3-bedroom family home, and a 4-bedroom luxury estate. "
+            "What specific features or amenities are most important to you in your next home?"
+        )
+
+@router.get("/test")
+async def test_endpoint():
+    """Test endpoint"""
+    return {
+        "status": "ready",
+        "method": "ConversationRelay",
+        "tts": "ElevenLabs",
+        "stt": "Deepgram",
+        "voices": list(ELEVENLABS_VOICES.keys()),
+        "models": list(MODELS.keys())
+    }
+
+@router.post("/simple")
+async def simple_elevenlabs_relay(request: Request):
+    """
+    Simplified version without WebSocket - just basic ConversationRelay
+    """
+    try:
+        # Use Rachel voice with turbo model for best balance
+        voice_config = f"{ELEVENLABS_VOICES['rachel']}-{MODELS['turbo']}-1.0_0.5_0.75"
+        
+        # Simple TwiML with just greeting
+        twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say voice="Polly.Joanna">Connecting you to Cora with ElevenLabs voice.</Say>
+    <Connect>
+        <ConversationRelay 
+            ttsProvider="ElevenLabs"
+            voice="{voice_config}"
+            elevenlabsTextNormalization="on"
+            welcomeGreeting="Hello! This is Cora from your real estate team. I have a natural ElevenLabs voice now. How can I help you find your dream home today?"
+        />
+    </Connect>
+</Response>"""
+        
+        return Response(content=twiml, media_type="application/xml")
+        
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        fallback = """<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>Technical difficulty. Please try again.</Say>
+</Response>"""
+        return Response(content=fallback, media_type="application/xml")
