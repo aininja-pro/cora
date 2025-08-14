@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/twilio-elevenlabs", tags=["twilio-elevenlabs"])
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
 
+# No proxy needed with paid ElevenLabs plan
+
 # Popular ElevenLabs voice IDs
 VOICES = {
     "rachel": "21m00Tcm4TlvDq8ikWAM",  # Clear American female
@@ -47,8 +49,9 @@ async def generate_elevenlabs_audio(text: str, voice_id: str = None) -> str:
         voice_id = VOICES["rachel"]
     
     try:
+        # Direct connection - no proxy needed with paid plan
         async with httpx.AsyncClient() as client:
-            # Add User-Agent and additional headers to avoid abuse detection
+            # Add User-Agent and additional headers
             headers = {
                 "xi-api-key": ELEVENLABS_API_KEY,
                 "Content-Type": "application/json",
@@ -56,19 +59,21 @@ async def generate_elevenlabs_audio(text: str, voice_id: str = None) -> str:
                 "Accept": "audio/mpeg",
             }
             
-            # Use simpler model to avoid abuse detection
+            # Use standard model now that we have clean IP
             response = await client.post(
                 f"{ELEVENLABS_API_URL}/text-to-speech/{voice_id}/stream",
                 headers=headers,
                 json={
                     "text": text,
-                    "model_id": "eleven_turbo_v2",  # Faster, less likely to trigger abuse
+                    "model_id": "eleven_monolingual_v1",  # High quality model
                     "voice_settings": {
                         "stability": 0.5,
                         "similarity_boost": 0.75,
+                        "style": 0.5,
+                        "use_speaker_boost": True
                     }
                 },
-                timeout=10.0
+                timeout=15.0  # Increase timeout for proxy
             )
             
             if response.status_code == 200:
