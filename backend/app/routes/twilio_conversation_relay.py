@@ -30,27 +30,24 @@ MODELS = {
     "standard": "eleven_monolingual_v1",  # High quality
 }
 
-@router.post("/voice")
-async def handle_voice_with_relay(request: Request):
+@router.get("/twiml")
+async def handle_twiml_get(request: Request):
     """
     Handle incoming call using ConversationRelay with ElevenLabs
-    This is the official Twilio way to use ElevenLabs
+    This matches the Twilio tutorial exactly - GET request to /twiml
     """
     try:
-        # Get form data
-        form_data = await request.form()
-        form_dict = dict(form_data)
-        
-        from_number = form_dict.get('From', 'Unknown')
-        from_city = form_dict.get('FromCity', 'Unknown')
-        from_state = form_dict.get('FromState', 'Unknown')
+        # Get query parameters from GET request
+        from_number = request.query_params.get('From', 'Unknown')
+        from_city = request.query_params.get('FromCity', 'Unknown')
+        from_state = request.query_params.get('FromState', 'Unknown')
         
         logger.info(f"📞 Incoming call from {from_number} ({from_city}, {from_state})")
         
         # Get base URL for WebSocket
         # Render uses HTTPS, so WebSocket should be WSS
         base_url = "wss://cora-backend-epv0.onrender.com"
-        websocket_url = f"{base_url}/api/twilio-relay/websocket"
+        websocket_url = f"{base_url}/api/twilio-relay/ws"  # Using /ws like the tutorial
         
         # Configure ElevenLabs voice with ConversationRelay
         # Format: VoiceID-Model-Speed_Stability_Similarity
@@ -83,7 +80,15 @@ async def handle_voice_with_relay(request: Request):
 </Response>"""
         return Response(content=error_twiml, media_type="application/xml")
 
-@router.websocket("/websocket")
+# Also support POST for compatibility
+@router.post("/voice")
+async def handle_voice_with_relay(request: Request):
+    """
+    POST version for backward compatibility
+    """
+    return await handle_twiml_get(request)
+
+@router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for ConversationRelay
