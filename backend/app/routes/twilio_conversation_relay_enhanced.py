@@ -73,11 +73,20 @@ class CallSession:
         self.full_transcript = []
         self.properties_discussed = set()
         self.lead_info = {}
-        self.supabase = SupabaseService()
+        try:
+            self.supabase = SupabaseService()
+        except Exception as e:
+            logger.error(f"Failed to initialize Supabase service: {str(e)}")
+            self.supabase = None
         self.start_time = datetime.utcnow()
     
     async def initialize(self):
         """Create initial call record in database"""
+        if not self.supabase:
+            logger.warning("Supabase not available, skipping call record creation")
+            self.call_id = None
+            return False
+            
         try:
             call_record = await self.supabase.create_call(
                 phone_number=self.phone_number,
@@ -88,8 +97,12 @@ class CallSession:
             )
             self.call_id = call_record["id"]
             logger.info(f"Initialized call session: {self.call_id}")
+            return True
         except Exception as e:
             logger.error(f"Failed to initialize call session: {str(e)}")
+            # Don't fail the whole call just because DB isn't working
+            self.call_id = None
+            return False
     
     async def add_user_message(self, message: str):
         """Add user message to transcript"""
@@ -100,7 +113,7 @@ class CallSession:
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        if self.call_id:
+        if self.call_id and self.supabase:
             try:
                 await self.supabase.add_transcript_entry(
                     call_id=self.call_id,
@@ -124,7 +137,7 @@ class CallSession:
             "timestamp": datetime.utcnow().isoformat()
         })
         
-        if self.call_id:
+        if self.call_id and self.supabase:
             try:
                 await self.supabase.add_transcript_entry(
                     call_id=self.call_id,
@@ -159,7 +172,7 @@ class CallSession:
                     elif any(word in message_lower for word in ["no", "not interested", "too expensive"]):
                         interest_level = "low"
                     
-                    if self.call_id:
+                    if self.call_id and self.supabase:
                         try:
                             await self.supabase.track_property_inquiry(
                                 call_id=self.call_id,
@@ -236,7 +249,7 @@ class CallSession:
     
     async def end_call(self):
         """End the call and save final data"""
-        if self.call_id:
+        if self.call_id and self.supabase:
             try:
                 # Calculate call duration
                 duration = int((datetime.utcnow() - self.start_time).total_seconds())
@@ -352,12 +365,16 @@ async def websocket_endpoint(websocket: WebSocket):
         # Create call session
         try:
             session = CallSession(call_sid, phone_number, caller_city, caller_state)
-            await session.initialize()
+            init_result = await session.initialize()
             active_sessions[call_sid] = session
-            logger.info(f"✅ Call session initialized successfully: {session.call_id}")
+            if init_result:
+                logger.info(f"✅ Call session initialized successfully with DB: {session.call_id}")
+            else:
+                logger.warning(f"⚠️ Call session created but DB not available for {call_sid}")
         except Exception as e:
-            logger.error(f"❌ Failed to initialize call session: {str(e)}")
-            # Continue anyway to handle the call even if DB fails
+            logger.error(f"❌ Failed to create call session: {str(e)}")
+            # Create a minimal session anyway
+            session = None
         
         logger.info(f"WebSocket connection established for call {call_sid}")
         
