@@ -48,7 +48,8 @@ async def handle_voice_with_relay(request: Request):
         logger.info(f"📞 Incoming call from {from_number} ({from_city}, {from_state})")
         
         # Get base URL for WebSocket
-        base_url = str(request.url).replace('http://', 'wss://').replace('https://', 'wss://').split('/api/')[0]
+        # Render uses HTTPS, so WebSocket should be WSS
+        base_url = "wss://cora-backend-epv0.onrender.com"
         websocket_url = f"{base_url}/api/twilio-relay/websocket"
         
         # Configure ElevenLabs voice with ConversationRelay
@@ -91,16 +92,30 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     
     try:
-        logger.info("WebSocket connection established")
+        logger.info("WebSocket connection established for ConversationRelay")
         
         while True:
             # Receive message from Twilio
-            data = await websocket.receive_json()
+            message = await websocket.receive_text()
+            
+            # Parse the message
+            try:
+                data = json.loads(message)
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse message: {message}")
+                continue
+            
             event_type = data.get("type")
+            logger.info(f"Received event: {event_type}")
             
             if event_type == "setup":
                 # Initial setup from Twilio
                 logger.info(f"Setup received: {data}")
+                # Send ready signal
+                await websocket.send_text(json.dumps({
+                    "type": "setup",
+                    "status": "ready"
+                }))
                 
             elif event_type == "prompt":
                 # User spoke something
@@ -112,14 +127,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 # Send response back to Twilio
                 # ConversationRelay handles the TTS with ElevenLabs automatically
-                await websocket.send_json({
+                await websocket.send_text(json.dumps({
                     "type": "text",
                     "token": response_text
-                })
+                }))
                 
             elif event_type == "interrupt":
                 # User interrupted the AI
                 logger.info("User interrupted")
+                await websocket.send_text(json.dumps({
+                    "type": "interrupt",
+                    "status": "acknowledged"
+                }))
                 
             elif event_type == "dtmf":
                 # User pressed a key
@@ -134,7 +153,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
     finally:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except:
+            pass
 
 def generate_property_response(user_message: str) -> str:
     """
