@@ -40,7 +40,7 @@ class SupabaseService:
         try:
             call_data = {
                 "phone_number": phone_number,
-                "call_sid": call_sid,
+                "call_id": call_sid,  # The column is actually called call_id, not call_sid
                 "direction": direction,
                 "caller_city": caller_city,
                 "caller_state": caller_state,
