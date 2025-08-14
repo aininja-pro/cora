@@ -41,16 +41,17 @@ class SupabaseService:
             call_data = {
                 "phone_number": phone_number,
                 "call_id": call_sid,  # The column is actually called call_id, not call_sid
-                "direction": direction,
+                # "direction": direction,  # This column doesn't exist in the table
                 "caller_city": caller_city,
                 "caller_state": caller_state,
                 "call_status": "in_progress",
                 "start_time": datetime.utcnow().isoformat(),
-                "metadata": {}
+                "status": "in_progress",  # Use status column instead
+                "duration": 0  # Initialize duration
             }
             
-            if agent_id:
-                call_data["agent_id"] = agent_id
+            # Remove None values to avoid errors
+            call_data = {k: v for k, v in call_data.items() if v is not None}
             
             response = self.client.table("calls").insert(call_data).execute()
             
@@ -93,6 +94,7 @@ class SupabaseService:
         try:
             updates = {
                 "call_status": "completed",
+                "status": "completed",  # Update both status columns
                 "end_time": datetime.utcnow().isoformat()
             }
             
