@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Phone, Clock, MessageSquare, ChevronDown, ChevronUp, Archive, Trash2, Check, Square } from 'lucide-react'
+import { Phone, Clock, MessageSquare, ChevronDown, ChevronUp, Archive, Trash2 } from 'lucide-react'
 import { API_URL } from '../config'
 
 function Calls() {
@@ -7,8 +7,6 @@ function Calls() {
   const [expandedCall, setExpandedCall] = useState(null)
   const [loading, setLoading] = useState(true)
   const [analyzingCall, setAnalyzingCall] = useState(null)
-  const [selectedCalls, setSelectedCalls] = useState(new Set())
-  const [bulkMode, setBulkMode] = useState(false)
 
   useEffect(() => {
     fetchCalls()
@@ -102,46 +100,6 @@ function Calls() {
     }
   }
 
-  const toggleCallSelection = (callId) => {
-    setSelectedCalls(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(callId)) {
-        newSet.delete(callId)
-      } else {
-        newSet.add(callId)
-      }
-      return newSet
-    })
-  }
-
-  const selectAllCalls = () => {
-    if (selectedCalls.size === calls.length) {
-      setSelectedCalls(new Set()) // Deselect all
-    } else {
-      setSelectedCalls(new Set(calls.map(call => call.id))) // Select all
-    }
-  }
-
-  const bulkDeleteCalls = () => {
-    if (selectedCalls.size === 0) return
-    
-    if (confirm(`Are you sure you want to delete ${selectedCalls.size} selected calls?`)) {
-      setCalls(prevCalls => prevCalls.filter(call => !selectedCalls.has(call.id)))
-      setSelectedCalls(new Set())
-      setBulkMode(false)
-    }
-  }
-
-  const bulkArchiveCalls = () => {
-    if (selectedCalls.size === 0) return
-    
-    if (confirm(`Archive ${selectedCalls.size} selected calls?`)) {
-      setCalls(prevCalls => prevCalls.filter(call => !selectedCalls.has(call.id)))
-      setSelectedCalls(new Set())
-      setBulkMode(false)
-    }
-  }
-
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60)
     const secs = seconds % 60
@@ -186,56 +144,12 @@ function Calls() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-navy">Recent Calls</h2>
-        <div className="flex items-center space-x-2">
-          {!bulkMode ? (
-            <>
-              <button 
-                onClick={() => setBulkMode(true)}
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Select Multiple
-              </button>
-              <button 
-                onClick={fetchCalls}
-                className="px-4 py-2 bg-coral text-white rounded-lg hover:bg-coral-dark transition-colors"
-              >
-                Refresh
-              </button>
-            </>
-          ) : (
-            <>
-              <span className="text-sm text-gray-600">
-                {selectedCalls.size} selected
-              </span>
-              <button 
-                onClick={selectAllCalls}
-                className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200 transition-colors"
-              >
-                {selectedCalls.size === calls.length ? 'Deselect All' : 'Select All'}
-              </button>
-              <button 
-                onClick={bulkArchiveCalls}
-                disabled={selectedCalls.size === 0}
-                className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300 transition-colors disabled:opacity-50"
-              >
-                Archive ({selectedCalls.size})
-              </button>
-              <button 
-                onClick={bulkDeleteCalls}
-                disabled={selectedCalls.size === 0}
-                className="px-3 py-2 bg-red-100 text-red-700 rounded-lg text-sm hover:bg-red-200 transition-colors disabled:opacity-50"
-              >
-                Delete ({selectedCalls.size})
-              </button>
-              <button 
-                onClick={() => {setBulkMode(false); setSelectedCalls(new Set())}}
-                className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200 transition-colors"
-              >
-                Cancel
-              </button>
-            </>
-          )}
-        </div>
+        <button 
+          onClick={fetchCalls}
+          className="px-4 py-2 bg-coral text-white rounded-lg hover:bg-coral-dark transition-colors"
+        >
+          Refresh
+        </button>
       </div>
 
       {calls.length === 0 ? (
@@ -251,24 +165,10 @@ function Calls() {
               {/* Call Card Header */}
               <div 
                 className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                onClick={() => bulkMode ? toggleCallSelection(call.id) : toggleCallExpansion(call)}
+                onClick={() => toggleCallExpansion(call)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start space-x-3">
-                    {bulkMode && (
-                      <div 
-                        className="p-2 cursor-pointer"
-                        onClick={(e) => { e.stopPropagation(); toggleCallSelection(call.id); }}
-                      >
-                        {selectedCalls.has(call.id) ? (
-                          <div className="w-5 h-5 bg-coral text-white rounded flex items-center justify-center">
-                            <Check className="w-3 h-3" />
-                          </div>
-                        ) : (
-                          <Square className="w-5 h-5 text-gray-400" />
-                        )}
-                      </div>
-                    )}
                     <div className="p-2 bg-cream rounded-lg">
                       <Phone className="w-5 h-5 text-coral" />
                     </div>
