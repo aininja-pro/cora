@@ -47,7 +47,10 @@ class SupabaseService:
                 "call_status": "in_progress",
                 "start_time": datetime.utcnow().isoformat(),
                 "status": "in_progress",  # Use status column instead
-                "duration": 0  # Initialize duration
+                "duration": 0,  # Initialize duration
+                "caller_name": None,  # Will be updated by analysis
+                "property_mentioned": None,  # Will be updated by analysis
+                "lead_score": 50  # Default lead score
             }
             
             # Remove None values to avoid errors
@@ -108,6 +111,47 @@ class SupabaseService:
             
         except Exception as e:
             logger.error(f"Error ending call: {str(e)}")
+            raise
+    
+    async def save_call_analysis(
+        self,
+        call_id: str,
+        analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Save GPT analysis results to the call record"""
+        try:
+            updates = {}
+            
+            # Update caller name if extracted
+            if analysis.get("caller_name"):
+                updates["caller_name"] = analysis["caller_name"]
+            
+            # Update property mentioned if extracted
+            if analysis.get("property_interests") and len(analysis["property_interests"]) > 0:
+                updates["property_mentioned"] = analysis["property_interests"][0]
+            
+            # Update lead score based on analysis
+            lead_quality = analysis.get("lead_quality", "cold")
+            if lead_quality == "hot":
+                updates["lead_score"] = 85
+            elif lead_quality == "warm":
+                updates["lead_score"] = 65
+            else:
+                updates["lead_score"] = 35
+            
+            # Store the full analysis as JSON in a metadata field if it exists
+            if updates:
+                updates["updated_at"] = datetime.utcnow().isoformat()
+                response = self.client.table("calls").update(updates).eq("id", call_id).execute()
+                
+                if response.data:
+                    logger.info(f"Saved analysis results for call {call_id}")
+                    return response.data[0]
+            
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error saving call analysis: {str(e)}")
             raise
     
     async def add_transcript_entry(

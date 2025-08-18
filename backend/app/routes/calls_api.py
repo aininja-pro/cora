@@ -178,6 +178,12 @@ async def analyze_call(call_id: str) -> Dict[str, Any]:
             call_info=call
         )
         
+        # Save the analysis results to the database for persistence
+        try:
+            await supabase.save_call_analysis(call_id, analysis)
+        except Exception as e:
+            logger.warning(f"Could not save analysis to database: {str(e)}")
+        
         return {
             "success": True,
             "call_id": call_id,

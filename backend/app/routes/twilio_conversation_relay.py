@@ -313,11 +313,8 @@ async def websocket_endpoint(websocket: WebSocket):
                                 
                                 analysis = await analysis_service.analyze_call_transcript(transcript_entries)
                                 
-                                # Update call record with analysis results
-                                if analysis.get("caller_name"):
-                                    await db.update_call(active_calls[call_sid]["id"], {
-                                        "caller_name": analysis["caller_name"]
-                                    })
+                                # Save analysis results to database
+                                await db.save_call_analysis(active_calls[call_sid]["id"], analysis)
                                 
                                 logger.info(f"Auto-analyzed call {call_sid}: {analysis.get('caller_name', 'No name')} - {analysis.get('lead_quality', 'unknown')} lead")
                                 

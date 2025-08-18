@@ -18,21 +18,26 @@ function Calls() {
       const data = await response.json()
       
       if (data.success && data.calls) {
-        const transformedCalls = data.calls.map(call => ({
-          id: call.id,
-          phoneNumber: call.phone_number || 'Unknown',
-          callerName: call.caller_name || 'Unknown Caller',
-          duration: call.duration || 0,
-          timestamp: new Date(call.created_at),
-          property: 'Click to analyze',
-          leadScore: 'Unknown',
-          status: call.call_status || call.status || 'completed',
-          callId: call.call_id,
-          transcript: call.transcript,
-          rawCall: call,
-          analysis: null, // Will be populated when analyzed
-          isAnalyzed: false
-        }))
+        const transformedCalls = data.calls.map(call => {
+          // Check if call already has analysis data from database
+          const hasAnalysisData = call.caller_name && call.caller_name !== 'Unknown Caller'
+          
+          return {
+            id: call.id,
+            phoneNumber: call.phone_number || 'Unknown',
+            callerName: call.caller_name || 'Unknown Caller',
+            duration: call.duration || 0,
+            timestamp: new Date(call.created_at),
+            property: call.property_mentioned || (hasAnalysisData ? 'Analysis available' : 'Click to analyze'),
+            leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 60 ? 'Warm' : 'Cold',
+            status: call.call_status || call.status || 'completed',
+            callId: call.call_id,
+            transcript: call.transcript,
+            rawCall: call,
+            analysis: null, // Will be populated when clicked
+            isAnalyzed: hasAnalysisData // True if database already has analysis
+          }
+        })
         setCalls(transformedCalls)
       }
       setLoading(false)
@@ -101,18 +106,26 @@ function Calls() {
     }
   }
 
+
   const archiveCall = async (callId) => {
-    // TODO: Implement archive functionality
-    console.log('Archive call:', callId)
-    // For now, just remove from the list
-    setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+    if (confirm('Archive this call? It will be hidden from the main list.')) {
+      try {
+        // TODO: Add API call to mark as archived
+        setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+      } catch (error) {
+        console.error('Error archiving call:', error)
+      }
+    }
   }
 
   const deleteCall = async (callId) => {
-    if (confirm('Are you sure you want to delete this call?')) {
-      // TODO: Implement delete API call
-      console.log('Delete call:', callId)
-      setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+    if (confirm('Are you sure you want to permanently delete this call?')) {
+      try {
+        // TODO: Add API call to delete call
+        setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+      } catch (error) {
+        console.error('Error deleting call:', error)
+      }
     }
   }
 
@@ -365,28 +378,6 @@ function Calls() {
       )}
     </div>
   )
-
-  const archiveCall = async (callId) => {
-    if (confirm('Archive this call? It will be hidden from the main list.')) {
-      try {
-        // TODO: Add API call to mark as archived
-        setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
-      } catch (error) {
-        console.error('Error archiving call:', error)
-      }
-    }
-  }
-
-  const deleteCall = async (callId) => {
-    if (confirm('Are you sure you want to permanently delete this call?')) {
-      try {
-        // TODO: Add API call to delete call
-        setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
-      } catch (error) {
-        console.error('Error deleting call:', error)
-      }
-    }
-  }
 }
 
 export default Calls
