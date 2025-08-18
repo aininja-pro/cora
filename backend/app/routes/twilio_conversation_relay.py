@@ -140,7 +140,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             call_sid=call_sid,
                             direction="inbound"
                         )
-                        active_calls[call_sid] = call_record.get("id")
+                        active_calls[call_sid] = {
+                            "id": call_record.get("id"),
+                            "phone": data.get("from", "unknown")
+                        }
                         logger.info(f"Call record created: {call_record.get('id')}")
                     except Exception as e:
                         logger.warning(f"Could not create call record: {e}")
@@ -163,7 +166,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if db and call_sid in active_calls:
                     try:
                         await db.add_transcript_entry(
-                            call_id=active_calls[call_sid],
+                            call_id=active_calls[call_sid]["id"],
                             speaker="user",
                             message=user_message,
                             sequence_number=len(transcript)
@@ -171,8 +174,70 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as e:
                         logger.warning(f"Could not save transcript: {e}")
                 
-                # Generate response based on what user said
-                response_text = generate_property_response(user_message)
+                # Generate intelligent response using GPT-4
+                try:
+                    from ..services.gpt_service import GPTService
+                    gpt_service = GPTService()
+                    
+                    # Get caller info if available
+                    caller_info = {
+                        "phone": call_sid and active_calls.get(call_sid, {}).get("phone", "unknown"),
+                        "call_sid": call_sid
+                    }
+                    
+                    gpt_result = await gpt_service.generate_property_response(
+                        user_message=user_message,
+                        conversation_history=transcript,
+                        caller_info=caller_info
+                    )
+                    
+                    response_text = gpt_result["response"]
+                    extracted_info = gpt_result.get("extracted_info", {})
+                    
+                    # Log and save extracted information
+                    if extracted_info:
+                        logger.info(f"GPT extracted info: {extracted_info}")
+                        
+                        # Store extracted info for later use
+                        if call_sid not in active_calls:
+                            active_calls[call_sid] = {}
+                        if "extracted_info" not in active_calls[call_sid]:
+                            active_calls[call_sid]["extracted_info"] = []
+                        active_calls[call_sid]["extracted_info"].append(extracted_info)
+                        
+                        # Save property inquiries and lead info to database if available
+                        if db and call_sid in active_calls:
+                            try:
+                                # Save property inquiry if mentioned
+                                if extracted_info.get("property_interest"):
+                                    await db.track_property_inquiry(
+                                        call_id=active_calls[call_sid]["id"],
+                                        property_address=extracted_info["property_interest"],
+                                        interest_level=extracted_info.get("interest_level", "medium")
+                                    )
+                                
+                                # Save lead information
+                                lead_data = {}
+                                if extracted_info.get("budget_mentioned"):
+                                    lead_data["budget_range_max"] = extracted_info["budget_mentioned"]
+                                if extracted_info.get("bedrooms_wanted"):
+                                    lead_data["desired_bedrooms"] = extracted_info["bedrooms_wanted"]
+                                
+                                if lead_data:
+                                    # Get phone number from active call data
+                                    phone = active_calls[call_sid]["phone"]
+                                    await db.capture_lead(
+                                        call_id=active_calls[call_sid]["id"],
+                                        phone_number=phone,
+                                        **lead_data
+                                    )
+                                    
+                            except Exception as e:
+                                logger.warning(f"Could not save extracted info to database: {e}")
+                    
+                except Exception as e:
+                    logger.warning(f"GPT-4 failed, using fallback: {str(e)}")
+                    response_text = generate_property_response(user_message)
                 
                 # Add assistant response to transcript
                 transcript.append({"speaker": "assistant", "message": response_text})
@@ -181,7 +246,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if db and call_sid in active_calls:
                     try:
                         await db.add_transcript_entry(
-                            call_id=active_calls[call_sid],
+                            call_id=active_calls[call_sid]["id"],
                             speaker="assistant",
                             message=response_text,
                             sequence_number=len(transcript)
@@ -221,7 +286,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             for t in transcript
                         ])
                         await db.end_call(
-                            call_id=active_calls[call_sid],
+                            call_id=active_calls[call_sid]["id"],
                             transcript=full_transcript
                         )
                         logger.info(f"Call data saved for {call_sid}")
