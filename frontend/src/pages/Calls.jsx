@@ -20,18 +20,25 @@ function Calls() {
       
       if (data.success && data.calls) {
         // Transform database calls to frontend format
-        const transformedCalls = data.calls.map(call => ({
-          id: call.id,
-          phoneNumber: call.phone_number || 'Unknown',
-          callerName: extractNameFromTranscript(call.transcript) || 'Unknown Caller',
-          duration: call.duration || 0,
-          timestamp: new Date(call.created_at),
-          property: extractPropertyFromTranscript(call.transcript) || 'No property mentioned',
-          leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 50 ? 'Warm' : 'Cold',
-          status: call.call_status || call.status || 'completed',
-          callId: call.call_id,
-          rawCall: call // Store full call data for detailed view
-        }))
+        const transformedCalls = data.calls.map(call => {
+          // Determine actual call status
+          const actualStatus = call.call_status === 'in_progress' && call.end_time ? 'completed' : 
+                              call.call_status === 'in_progress' ? 'in_progress' : 
+                              call.call_status || call.status || 'completed'
+          
+          return {
+            id: call.id,
+            phoneNumber: call.phone_number || 'Unknown',
+            callerName: extractNameFromTranscript(call.transcript) || 'Unknown Caller',
+            duration: call.duration || 0,
+            timestamp: new Date(call.created_at),
+            property: extractPropertyFromTranscript(call.transcript) || 'No property mentioned',
+            leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 50 ? 'Warm' : 'Cold',
+            status: actualStatus,
+            callId: call.call_id,
+            rawCall: call // Store full call data for detailed view
+          }
+        })
         setCalls(transformedCalls)
       }
       setLoading(false)
@@ -41,31 +48,111 @@ function Calls() {
     }
   }
 
-  // Helper function to extract name from transcript
-  const extractNameFromTranscript = (transcript) => {
-    if (!transcript) return null
-    const nameMatch = transcript.match(/my name is (\w+)/i) || transcript.match(/I'm (\w+)/i)
-    return nameMatch ? nameMatch[1] : null
-  }
-
-  // Helper function to extract property from transcript  
-  const extractPropertyFromTranscript = (transcript) => {
-    if (!transcript) return null
-    if (transcript.includes('123') && transcript.includes('main')) return '123 Main Street'
-    if (transcript.includes('456') && transcript.includes('oak')) return '456 Oak Avenue' 
-    if (transcript.includes('789') && transcript.includes('pine')) return '789 Pine Lane'
+  // Enhanced function to extract name from transcript or individual messages
+  const extractNameFromTranscript = (transcript, detailedEntries = null) => {
+    // List of words that are NOT names (to filter out bad extractions)
+    const excludeWords = ['interested', 'looking', 'calling', 'here', 'ready', 'sorry', 'thanks', 'hello', 'hi', 'good', 'well', 'yeah', 'yes', 'no', 'okay', 'sure', 'maybe', 'just', 'also', 'really', 'very']
+    
+    const isValidName = (word) => {
+      return word && 
+             word.length >= 2 && 
+             word.length <= 20 && 
+             !excludeWords.includes(word.toLowerCase()) &&
+             /^[A-Za-z]+$/.test(word) // Only letters
+    }
+    
+    // First try the full transcript text
+    if (transcript) {
+      const nameMatch = transcript.match(/my name is (\w+)/i) || 
+                       transcript.match(/name is (\w+)/i) ||
+                       transcript.match(/this is (\w+)/i)
+      if (nameMatch && isValidName(nameMatch[1])) {
+        return nameMatch[1]
+      }
+    }
+    
+    // Then try individual message entries (more specific patterns)
+    if (detailedEntries && detailedEntries.length > 0) {
+      for (const entry of detailedEntries) {
+        if (entry.speaker === 'user') {
+          const nameMatch = entry.message.match(/my name is (\w+)/i) || 
+                           entry.message.match(/name is (\w+)/i) ||
+                           entry.message.match(/this is (\w+)/i) ||
+                           entry.message.match(/I'm (\w+) and/i) || // Only if followed by "and"
+                           entry.message.match(/I'm (\w+),/i) || // If followed by comma
+                           entry.message.match(/(\w+) and my phone/i) || // "Ray and my phone number"
+                           entry.message.match(/so my name is (\w+)/i)
+          if (nameMatch && isValidName(nameMatch[1])) {
+            return nameMatch[1]
+          }
+        }
+      }
+    }
+    
     return null
   }
 
-  // Fetch detailed call information including full transcript
-  const fetchCallDetails = async (callId) => {
+  // Enhanced function to extract property from transcript
+  const extractPropertyFromTranscript = (transcript, detailedEntries = null) => {
+    const checkForProperty = (text) => {
+      if (!text) return null
+      const textLower = text.toLowerCase()
+      if ((textLower.includes('123') && textLower.includes('main')) || textLower.includes('123 main')) return '123 Main Street'
+      if ((textLower.includes('456') && textLower.includes('oak')) || textLower.includes('456 oak')) return '456 Oak Avenue' 
+      if ((textLower.includes('789') && textLower.includes('pine')) || textLower.includes('789 pine')) return '789 Pine Lane'
+      return null
+    }
+    
+    // Check full transcript first
+    let property = checkForProperty(transcript)
+    if (property) return property
+    
+    // Check individual messages
+    if (detailedEntries && detailedEntries.length > 0) {
+      for (const entry of detailedEntries) {
+        property = checkForProperty(entry.message)
+        if (property) return property
+      }
+    }
+    
+    return null
+  }
+
+  // Fetch detailed call information and GPT analysis
+  const fetchCallDetails = async (callId, callObj = null) => {
     setLoadingDetails(true)
     try {
-      const response = await fetch(`${API_URL}/api/calls/${callId}`)
-      const data = await response.json()
+      // Get call details and GPT analysis in parallel
+      const [detailsResponse, analysisResponse] = await Promise.all([
+        fetch(`${API_URL}/api/calls/${callId}`),
+        fetch(`${API_URL}/api/calls/${callId}/analyze`)
+      ])
       
-      if (data.success) {
-        setSelectedCallDetails(data)
+      const details = await detailsResponse.json()
+      const analysis = await analysisResponse.json()
+      
+      if (details.success) {
+        // Combine details with GPT analysis
+        const enhancedDetails = {
+          ...details,
+          analysis: analysis.success ? analysis.analysis : null
+        }
+        
+        setSelectedCallDetails(enhancedDetails)
+        
+        // Update the selected call with GPT-extracted information
+        const currentCall = callObj || selectedCall
+        if (currentCall && analysis.success) {
+          const updatedCall = updateCallWithGPTAnalysis(currentCall, enhancedDetails)
+          setSelectedCall(updatedCall)
+          
+          // Also update the call in the main calls list
+          setCalls(prevCalls => 
+            prevCalls.map(call => 
+              call.id === callId ? updatedCall : call
+            )
+          )
+        }
       }
     } catch (error) {
       console.error('Error fetching call details:', error)
@@ -76,7 +163,90 @@ function Calls() {
   const handleCallSelect = (call) => {
     setSelectedCall(call)
     setSelectedCallDetails(null) // Clear previous details
-    fetchCallDetails(call.id)
+    fetchCallDetails(call.id, call) // Pass the call object
+  }
+
+  // Calculate lead quality based on conversation content
+  const calculateLeadQuality = (transcriptEntries, hasPropertyInquiries, hasLeadInfo) => {
+    if (!transcriptEntries || transcriptEntries.length === 0) return 'Cold'
+    
+    const fullConversation = transcriptEntries.map(e => e.message).join(' ').toLowerCase()
+    
+    // Hot lead indicators
+    const hotIndicators = ['schedule', 'appointment', 'showing', 'tour', 'visit', 'see the house', 'when can', 'available', 'phone number', 'contact']
+    const hotCount = hotIndicators.filter(indicator => fullConversation.includes(indicator)).length
+    
+    // Warm lead indicators  
+    const warmIndicators = ['interested', 'looking for', 'budget', 'bedrooms', 'price', 'tell me more', 'details', 'information']
+    const warmCount = warmIndicators.filter(indicator => fullConversation.includes(indicator)).length
+    
+    // Additional signals
+    const longConversation = transcriptEntries.length >= 6
+    const providedInfo = hasLeadInfo || fullConversation.includes('name is') || fullConversation.includes('phone')
+    
+    if (hotCount >= 2 || providedInfo) return 'Hot'
+    if (hotCount >= 1 || warmCount >= 3 || (warmCount >= 2 && longConversation)) return 'Warm' 
+    if (warmCount >= 1 || hasPropertyInquiries) return 'Warm'
+    return 'Cold'
+  }
+
+  // Update call information using GPT analysis (better than manual extraction)
+  const updateCallWithGPTAnalysis = (call, enhancedDetails) => {
+    const analysis = enhancedDetails.analysis
+    if (!analysis) return call
+    
+    // Calculate duration from transcript if available
+    const transcriptEntries = enhancedDetails.transcript?.entries || []
+    let actualDuration = call.duration
+    if (transcriptEntries.length >= 2) {
+      const firstMessage = new Date(transcriptEntries[0].timestamp)
+      const lastMessage = new Date(transcriptEntries[transcriptEntries.length - 1].timestamp)
+      actualDuration = Math.floor((lastMessage - firstMessage) / 1000)
+    }
+    
+    return {
+      ...call,
+      callerName: analysis.caller_name || call.callerName,
+      property: analysis.property_interests?.length > 0 ? analysis.property_interests[0] : call.property,
+      leadScore: analysis.lead_quality === 'hot' ? 'Hot' : 
+                 analysis.lead_quality === 'warm' ? 'Warm' : 'Cold',
+      duration: Math.max(actualDuration, call.duration),
+      analysis: analysis // Store full analysis for detailed view
+    }
+  }
+
+  // Update call information when we get detailed transcript
+  const updateCallWithDetails = (call, details) => {
+    const transcriptEntries = details.transcript?.entries || []
+    
+    // Extract name from detailed entries
+    const extractedName = extractNameFromTranscript(details.transcript?.full_text, transcriptEntries)
+    
+    // Extract property from detailed entries
+    const extractedProperty = extractPropertyFromTranscript(details.transcript?.full_text, transcriptEntries)
+    
+    // Calculate better lead quality
+    const leadQuality = calculateLeadQuality(
+      transcriptEntries, 
+      details.property_inquiries?.length > 0,
+      !!details.lead_info
+    )
+    
+    // Calculate actual duration from transcript timestamps
+    let actualDuration = call.duration
+    if (transcriptEntries.length >= 2) {
+      const firstMessage = new Date(transcriptEntries[0].timestamp)
+      const lastMessage = new Date(transcriptEntries[transcriptEntries.length - 1].timestamp)
+      actualDuration = Math.floor((lastMessage - firstMessage) / 1000)
+    }
+    
+    return {
+      ...call,
+      callerName: extractedName || call.callerName,
+      property: extractedProperty || call.property,
+      leadScore: leadQuality,
+      duration: Math.max(actualDuration, call.duration) // Use the larger of the two
+    }
   }
 
   const formatDuration = (seconds) => {
@@ -191,16 +361,13 @@ function Calls() {
                 <p className="text-sm text-gray-500">Caller</p>
                 <p className="font-semibold text-navy">{selectedCall.callerName}</p>
                 <p className="text-sm text-gray-600">{selectedCall.phoneNumber}</p>
-                <p className="text-xs text-gray-500">Call ID: {selectedCall.callId || 'Unknown'}</p>
               </div>
 
               <div className="flex justify-between">
                 <div>
-                  <p className="text-sm text-gray-500">Status</p>
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    selectedCall.status === 'completed' ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'
-                  }`}>
-                    {selectedCall.status}
+                  <p className="text-sm text-gray-500">Lead Quality</p>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${getLeadScoreColor(selectedCall.leadScore)}`}>
+                    {selectedCall.leadScore}
                   </span>
                 </div>
                 <div>
@@ -212,14 +379,60 @@ function Calls() {
               <div>
                 <p className="text-sm text-gray-500">Property Interest</p>
                 <p className="font-semibold text-navy">{selectedCall.property}</p>
+                {selectedCallDetails?.property_inquiries?.length > 0 && (
+                  <div className="mt-1">
+                    {selectedCallDetails.property_inquiries.map((inquiry, idx) => (
+                      <span key={idx} className={`inline-block px-2 py-1 rounded text-xs mr-1 ${
+                        inquiry.interest_level === 'very_high' ? 'bg-red-100 text-red-700' :
+                        inquiry.interest_level === 'high' ? 'bg-orange-100 text-orange-700' :
+                        inquiry.interest_level === 'medium' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {inquiry.interest_level} interest
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {loadingDetails ? (
                 <div className="text-center py-4">
-                  <div className="text-gray-500">Loading transcript...</div>
+                  <div className="text-gray-500">Analyzing call...</div>
                 </div>
               ) : selectedCallDetails ? (
                 <div>
+                  {/* Call Summary */}
+                  {selectedCallDetails.analysis && (
+                    <div className="mb-4">
+                      <p className="text-sm text-gray-500 mb-2">Call Summary</p>
+                      <div className="bg-blue-50 rounded-lg p-3 text-sm">
+                        <p className="font-medium text-navy mb-2">{selectedCallDetails.analysis.call_summary}</p>
+                        
+                        {selectedCallDetails.analysis.key_highlights?.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-xs text-gray-600 mb-1">Key Points:</p>
+                            <ul className="text-xs text-gray-700 list-disc list-inside space-y-1">
+                              {selectedCallDetails.analysis.key_highlights.map((highlight, idx) => (
+                                <li key={idx}>{highlight}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        
+                        {selectedCallDetails.analysis.next_actions?.length > 0 && (
+                          <div>
+                            <p className="text-xs text-gray-600 mb-1">Suggested Actions:</p>
+                            <ul className="text-xs text-green-700 list-disc list-inside space-y-1">
+                              {selectedCallDetails.analysis.next_actions.map((action, idx) => (
+                                <li key={idx}>{action}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <p className="text-sm text-gray-500 mb-2">Full Conversation</p>
                   <div className="bg-gray-50 rounded-lg p-3 max-h-96 overflow-y-auto space-y-3">
                     {selectedCallDetails.transcript?.entries?.length > 0 ? (

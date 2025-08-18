@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 import logging
 from ..services.supabase_service import SupabaseService
+from ..services.call_analysis_service import CallAnalysisService
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,38 @@ async def get_call_details(call_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error fetching call details: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch call details")
+
+
+@router.get("/{call_id}/analyze")
+async def analyze_call(call_id: str) -> Dict[str, Any]:
+    """
+    Analyze a call transcript using GPT-4 to extract insights, contact info, and summary
+    """
+    try:
+        supabase = SupabaseService()
+        call = await supabase.get_call_with_transcript(call_id)
+        
+        if not call:
+            raise HTTPException(status_code=404, detail="Call not found")
+        
+        # Analyze the call using GPT-4
+        analysis_service = CallAnalysisService()
+        analysis = await analysis_service.analyze_call_transcript(
+            transcript_entries=call.get("transcript_entries", []),
+            call_info=call
+        )
+        
+        return {
+            "success": True,
+            "call_id": call_id,
+            "analysis": analysis
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analyzing call: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to analyze call")
 
 
 @router.get("/{call_id}/transcript")
