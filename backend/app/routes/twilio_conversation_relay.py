@@ -294,6 +294,36 @@ async def websocket_endpoint(websocket: WebSocket):
                             transcript=full_transcript
                         )
                         logger.info(f"Call data saved for {call_sid}")
+                        
+                        # Auto-analyze calls with substantive conversations
+                        if len(transcript) >= 4:  # Only analyze calls with real conversations
+                            try:
+                                from ..services.call_analysis_service import CallAnalysisService
+                                analysis_service = CallAnalysisService()
+                                
+                                # Get transcript entries for analysis
+                                transcript_entries = []
+                                for i, entry in enumerate(transcript):
+                                    transcript_entries.append({
+                                        "speaker": entry["speaker"],
+                                        "message": entry["message"],
+                                        "timestamp": entry.get("timestamp", datetime.utcnow().isoformat()),
+                                        "sequence_number": i + 1
+                                    })
+                                
+                                analysis = await analysis_service.analyze_call_transcript(transcript_entries)
+                                
+                                # Update call record with analysis results
+                                if analysis.get("caller_name"):
+                                    await db.update_call(active_calls[call_sid]["id"], {
+                                        "caller_name": analysis["caller_name"]
+                                    })
+                                
+                                logger.info(f"Auto-analyzed call {call_sid}: {analysis.get('caller_name', 'No name')} - {analysis.get('lead_quality', 'unknown')} lead")
+                                
+                            except Exception as e:
+                                logger.warning(f"Auto-analysis failed for {call_sid}: {e}")
+                        
                     except Exception as e:
                         logger.warning(f"Could not save final call data: {e}")
                 
