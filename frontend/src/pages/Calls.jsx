@@ -5,7 +5,9 @@ import { API_URL } from '../config'
 function Calls() {
   const [calls, setCalls] = useState([])
   const [selectedCall, setSelectedCall] = useState(null)
+  const [selectedCallDetails, setSelectedCallDetails] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [loadingDetails, setLoadingDetails] = useState(false)
 
   useEffect(() => {
     fetchCalls()
@@ -13,23 +15,22 @@ function Calls() {
 
   const fetchCalls = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/agent/calls`)
+      const response = await fetch(`${API_URL}/api/calls/recent?limit=20`)
       const data = await response.json()
       
       if (data.success && data.calls) {
         // Transform database calls to frontend format
         const transformedCalls = data.calls.map(call => ({
-          id: call.id || call.call_id,
+          id: call.id,
           phoneNumber: call.phone_number || 'Unknown',
-          callerName: call.caller_name || 'Unknown Caller',
+          callerName: extractNameFromTranscript(call.transcript) || 'Unknown Caller',
           duration: call.duration || 0,
-          timestamp: new Date(call.created_at || call.timestamp),
-          property: call.property_mentioned || 'No property mentioned',
+          timestamp: new Date(call.created_at),
+          property: extractPropertyFromTranscript(call.transcript) || 'No property mentioned',
           leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 50 ? 'Warm' : 'Cold',
-          transcript: call.transcript ? [
-            { speaker: 'Caller', text: call.transcript },
-            { speaker: 'Cora', text: call.ai_response || 'Response pending...' }
-          ] : []
+          status: call.call_status || call.status || 'completed',
+          callId: call.call_id,
+          rawCall: call // Store full call data for detailed view
         }))
         setCalls(transformedCalls)
       }
@@ -38,6 +39,44 @@ function Calls() {
       console.error('Error fetching calls:', error)
       setLoading(false)
     }
+  }
+
+  // Helper function to extract name from transcript
+  const extractNameFromTranscript = (transcript) => {
+    if (!transcript) return null
+    const nameMatch = transcript.match(/my name is (\w+)/i) || transcript.match(/I'm (\w+)/i)
+    return nameMatch ? nameMatch[1] : null
+  }
+
+  // Helper function to extract property from transcript  
+  const extractPropertyFromTranscript = (transcript) => {
+    if (!transcript) return null
+    if (transcript.includes('123') && transcript.includes('main')) return '123 Main Street'
+    if (transcript.includes('456') && transcript.includes('oak')) return '456 Oak Avenue' 
+    if (transcript.includes('789') && transcript.includes('pine')) return '789 Pine Lane'
+    return null
+  }
+
+  // Fetch detailed call information including full transcript
+  const fetchCallDetails = async (callId) => {
+    setLoadingDetails(true)
+    try {
+      const response = await fetch(`${API_URL}/api/calls/${callId}`)
+      const data = await response.json()
+      
+      if (data.success) {
+        setSelectedCallDetails(data)
+      }
+    } catch (error) {
+      console.error('Error fetching call details:', error)
+    }
+    setLoadingDetails(false)
+  }
+
+  const handleCallSelect = (call) => {
+    setSelectedCall(call)
+    setSelectedCallDetails(null) // Clear previous details
+    fetchCallDetails(call.id)
   }
 
   const formatDuration = (seconds) => {
@@ -107,7 +146,7 @@ function Calls() {
                 className={`bg-white rounded-xl p-4 hover:shadow-lg transition-shadow cursor-pointer ${
                   selectedCall?.id === call.id ? 'ring-2 ring-coral' : ''
                 }`}
-                onClick={() => setSelectedCall(call)}
+                onClick={() => handleCallSelect(call)}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start space-x-3">
@@ -152,6 +191,22 @@ function Calls() {
                 <p className="text-sm text-gray-500">Caller</p>
                 <p className="font-semibold text-navy">{selectedCall.callerName}</p>
                 <p className="text-sm text-gray-600">{selectedCall.phoneNumber}</p>
+                <p className="text-xs text-gray-500">Call ID: {selectedCall.callId || 'Unknown'}</p>
+              </div>
+
+              <div className="flex justify-between">
+                <div>
+                  <p className="text-sm text-gray-500">Status</p>
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    selectedCall.status === 'completed' ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'
+                  }`}>
+                    {selectedCall.status}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Duration</p>
+                  <p className="font-semibold text-navy">{formatDuration(selectedCall.duration)}</p>
+                </div>
               </div>
 
               <div>
@@ -159,30 +214,69 @@ function Calls() {
                 <p className="font-semibold text-navy">{selectedCall.property}</p>
               </div>
 
-              <div>
-                <p className="text-sm text-gray-500">Lead Score</p>
-                <span className={`px-3 py-1 rounded-full text-sm font-medium ${getLeadScoreColor(selectedCall.leadScore)}`}>
-                  {selectedCall.leadScore}
-                </span>
-              </div>
+              {loadingDetails ? (
+                <div className="text-center py-4">
+                  <div className="text-gray-500">Loading transcript...</div>
+                </div>
+              ) : selectedCallDetails ? (
+                <div>
+                  <p className="text-sm text-gray-500 mb-2">Full Conversation</p>
+                  <div className="bg-gray-50 rounded-lg p-3 max-h-96 overflow-y-auto space-y-3">
+                    {selectedCallDetails.transcript?.entries?.length > 0 ? (
+                      selectedCallDetails.transcript.entries.map((entry, idx) => (
+                        <div key={idx} className={`${entry.speaker === 'assistant' ? 'text-right' : 'text-left'}`}>
+                          <p className="text-xs text-gray-500 mb-1 capitalize">
+                            {entry.speaker === 'assistant' ? 'CORA' : 'Caller'} • {new Date(entry.timestamp).toLocaleTimeString()}
+                          </p>
+                          <div className={`inline-block px-3 py-2 rounded-lg text-sm max-w-xs ${
+                            entry.speaker === 'assistant' 
+                              ? 'bg-coral text-white' 
+                              : 'bg-white text-navy border border-gray-200'
+                          }`}>
+                            {entry.message}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-center py-4">
+                        <p className="text-gray-500 text-sm">No detailed transcript available</p>
+                        {selectedCallDetails.transcript?.full_text && (
+                          <div className="mt-2 p-2 bg-white rounded border text-xs text-left">
+                            {selectedCallDetails.transcript.full_text}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
 
-              <div>
-                <p className="text-sm text-gray-500 mb-2">Transcript</p>
-                <div className="bg-gray-50 rounded-lg p-3 max-h-96 overflow-y-auto space-y-2">
-                  {selectedCall.transcript.map((entry, idx) => (
-                    <div key={idx} className={`${entry.speaker === 'Cora' ? 'text-right' : 'text-left'}`}>
-                      <p className="text-xs text-gray-500 mb-1">{entry.speaker}</p>
-                      <div className={`inline-block px-3 py-2 rounded-lg text-sm ${
-                        entry.speaker === 'Cora' 
-                          ? 'bg-coral text-white' 
-                          : 'bg-white text-navy border border-gray-200'
-                      }`}>
-                        {entry.text}
+                  {selectedCallDetails.property_inquiries?.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-sm text-gray-500 mb-2">Property Inquiries</p>
+                      <div className="space-y-2">
+                        {selectedCallDetails.property_inquiries.map((inquiry, idx) => (
+                          <div key={idx} className="bg-blue-50 rounded p-2 text-sm">
+                            <div className="font-medium">{inquiry.property_address}</div>
+                            <div className="text-xs text-gray-600">
+                              Interest: {inquiry.interest_level} • {new Date(inquiry.created_at).toLocaleString()}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
+                  )}
+
+                  {selectedCallDetails.lead_info && (
+                    <div className="mt-4">
+                      <p className="text-sm text-gray-500 mb-2">Lead Information</p>
+                      <div className="bg-green-50 rounded p-2 text-sm">
+                        {selectedCallDetails.lead_info.name && <div>Name: {selectedCallDetails.lead_info.name}</div>}
+                        {selectedCallDetails.lead_info.budget_range_max && <div>Budget: Up to ${selectedCallDetails.lead_info.budget_range_max.toLocaleString()}</div>}
+                        {selectedCallDetails.lead_info.desired_bedrooms && <div>Bedrooms: {selectedCallDetails.lead_info.desired_bedrooms}</div>}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
+              ) : null}
 
               <div className="pt-4 space-y-2">
                 <button className="w-full px-4 py-2 bg-coral text-white rounded-lg hover:bg-coral-dark transition-colors">
