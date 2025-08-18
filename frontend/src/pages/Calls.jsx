@@ -66,6 +66,35 @@ function Calls() {
     if (!call.transcript) {
       await fetchCallDetails(call.id)
     }
+    
+    // Analyze if no stored analysis
+    if (!call.analysis && !call.hasStoredAnalysis) {
+      await analyzeCall(call.id)
+    }
+  }
+
+  const analyzeCall = async (callId) => {
+    setAnalyzingCall(callId)
+    try {
+      const response = await fetch(`${API_URL}/api/calls/${callId}/analyze`)
+      const analysis = await response.json()
+      
+      if (analysis.success) {
+        // Update the call with analysis results
+        setCalls(prevCalls => 
+          prevCalls.map(call => 
+            call.id === callId ? {
+              ...call,
+              analysis: analysis.analysis,
+              hasStoredAnalysis: true
+            } : call
+          )
+        )
+      }
+    } catch (error) {
+      console.error('Error analyzing call:', error)
+    }
+    setAnalyzingCall(null)
   }
 
   const fetchCallDetails = async (callId) => {
@@ -331,6 +360,14 @@ function Calls() {
                       <p className="text-sm text-gray-500 mt-1">
                         Property: <span className="font-medium">{call.property}</span>
                       </p>
+                      {!call.hasStoredAnalysis && !bulkMode && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); analyzeCall(call.id); }}
+                          className="mt-2 px-2 py-1 bg-coral text-white rounded text-xs hover:bg-coral-dark transition-colors"
+                        >
+                          {analyzingCall === call.id ? 'Analyzing...' : 'Analyze'}
+                        </button>
+                      )}
                     </div>
                   </div>
                   
@@ -362,7 +399,7 @@ function Calls() {
                   ) : (
                     <div className="space-y-4">
                       {/* Call Summary */}
-                      {call.analysis && (
+                      {call.analysis ? (
                         <div>
                           <h4 className="font-medium text-navy mb-2">Call Summary</h4>
                           <div className="bg-white rounded-lg p-3 text-sm">
@@ -396,6 +433,16 @@ function Calls() {
                               </div>
                             )}
                           </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-6">
+                          <div className="text-gray-500 mb-3">No analysis available</div>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); analyzeCall(call.id); }}
+                            className="px-4 py-2 bg-coral text-white rounded-lg text-sm hover:bg-coral-dark transition-colors"
+                          >
+                            Analyze with GPT
+                          </button>
                         </div>
                       )}
 
