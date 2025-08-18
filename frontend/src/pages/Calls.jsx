@@ -37,7 +37,7 @@ function Calls() {
             callerName: call.caller_name || 'Unknown Caller',
             duration: call.duration || 0,
             timestamp: new Date(call.created_at),
-            property: call.property_mentioned || 'No property mentioned',
+            property: call.property_mentioned || 'Click to analyze',
             leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 60 ? 'Warm' : 'Cold',
             callId: call.call_id,
             analysis: storedAnalysis,
@@ -80,11 +80,19 @@ function Calls() {
       const analysis = await response.json()
       
       if (analysis.success) {
-        // Update the call with analysis results
+        // Update the call with analysis results AND extracted info
         setCalls(prevCalls => 
           prevCalls.map(call => 
             call.id === callId ? {
               ...call,
+              callerName: analysis.analysis.caller_name || call.callerName,
+              property: analysis.analysis.call_type === 'listing_consultation' ? 'Listing Consultation' :
+                       analysis.analysis.call_type === 'callback_request' ? 'Callback Request' :
+                       analysis.analysis.call_type === 'general_service' ? 'General Service' :
+                       analysis.analysis.property_interests?.length > 0 ? 
+                       analysis.analysis.property_interests[0] : 'Service Request',
+              leadScore: analysis.analysis.lead_quality === 'hot' ? 'Hot' : 
+                        analysis.analysis.lead_quality === 'warm' ? 'Warm' : 'Cold',
               analysis: analysis.analysis,
               hasStoredAnalysis: true
             } : call
@@ -403,6 +411,21 @@ function Calls() {
                         <div>
                           <h4 className="font-medium text-navy mb-2">Call Summary</h4>
                           <div className="bg-white rounded-lg p-3 text-sm">
+                            <div className="flex items-center mb-2">
+                              <span className={`px-2 py-1 rounded text-xs font-medium mr-2 ${
+                                call.analysis.call_type === 'listing_consultation' ? 'bg-green-100 text-green-700' :
+                                call.analysis.call_type === 'callback_request' ? 'bg-blue-100 text-blue-700' :
+                                call.analysis.call_type === 'general_service' ? 'bg-purple-100 text-purple-700' :
+                                'bg-gray-100 text-gray-700'
+                              }`}>
+                                {call.analysis.call_type?.replace('_', ' ') || 'property inquiry'}
+                              </span>
+                              {call.analysis.callback_requested && (
+                                <span className="px-2 py-1 rounded text-xs bg-orange-100 text-orange-700">
+                                  Callback Requested
+                                </span>
+                              )}
+                            </div>
                             <p className="text-gray-700 mb-3">{call.analysis.call_summary}</p>
                             
                             {call.analysis.key_highlights?.length > 0 && (

@@ -38,7 +38,16 @@ class CallAnalysisService:
             conversation_text = self._build_conversation_text(transcript_entries)
             
             # Create analysis prompt
-            system_prompt = """You are an expert real estate call analyst. Analyze the conversation transcript and extract key information.
+            system_prompt = """You are an expert real estate call analyst. Analyze ALL types of real estate conversations and extract key information.
+
+CONVERSATION TYPES TO ANALYZE:
+- Property inquiries and showings
+- Listing consultations (wanting to sell their property)
+- General real estate services (market analysis, agent services)
+- Referral requests and agent callbacks
+- Investment property discussions
+- First-time buyer consultations
+- Refinancing and market timing questions
 
 Be very careful with name extraction - only extract names that are clearly stated by the caller, not words like "interested", "looking", etc.
 
@@ -47,24 +56,37 @@ Provide a JSON response with this exact structure:
   "caller_name": "string or null - only if clearly stated by caller",
   "phone_number": "string or null - if mentioned in conversation", 
   "email": "string or null - if mentioned",
+  "call_type": "property_inquiry|listing_consultation|general_service|callback_request|investment|other",
   "property_interests": ["list of specific properties mentioned"],
+  "listing_interest": "boolean - true if they want to list/sell property",
+  "service_requested": "string or null - what service they want (callback, market analysis, etc.)",
   "budget_mentioned": "number or null - any budget/price range mentioned",
   "bedrooms_wanted": "number or null - bedroom preference",
-  "timeline": "string or null - when they want to buy/move",
+  "timeline": "string or null - when they want to buy/move/sell",
   "scheduling_requests": "string or null - any appointment requests",
+  "callback_requested": "boolean - true if they want agent to call back",
   "lead_quality": "hot|warm|cold - based on engagement level",
-  "call_summary": "2-3 sentence summary of the call",
+  "call_summary": "2-3 sentence summary of the call purpose and outcome",
   "key_highlights": ["list of 2-3 most important points from call"],
   "next_actions": ["list of suggested follow-up actions"],
-  "interest_level": "very_high|high|medium|low - based on engagement"
+  "interest_level": "very_high|high|medium|low - based on engagement",
+  "urgency": "immediate|this_week|this_month|flexible|unknown"
 }
 
 Lead Quality Guidelines:
-- HOT: Requested showing, provided contact info, ready to schedule, asked specific questions
-- WARM: Asked about multiple properties, discussed budget, showed genuine interest  
-- COLD: Basic inquiry only, didn't engage much
+- HOT: Provided contact info, requested callback, ready to list/buy, specific timeline, asked for agent services
+- WARM: Genuine inquiry, discussed services, showed interest in working with agent, asked good questions
+- COLD: Basic inquiry only, didn't provide much info, low engagement
 
-Properties available: 123 Main Street ($489k), 456 Oak Avenue ($325k), 789 Pine Lane ($750k)"""
+Call Types:
+- property_inquiry: Looking to buy/rent specific properties
+- listing_consultation: Want to sell their property or get market analysis
+- general_service: Need agent services, market info, referrals
+- callback_request: Want agent to call them back
+- investment: Investment property discussions
+- other: Doesn't fit other categories
+
+Available properties: 123 Main Street ($489k), 456 Oak Avenue ($325k), 789 Pine Lane ($750k)"""
 
             messages = [
                 {"role": "system", "content": system_prompt},
