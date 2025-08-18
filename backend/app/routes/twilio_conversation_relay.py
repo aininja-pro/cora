@@ -174,6 +174,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as e:
                         logger.warning(f"Could not save transcript: {e}")
                 
+                # Send quick acknowledgment for first message to reduce perceived delay
+                if len(transcript) == 1:  # First user message
+                    await websocket.send_text(json.dumps({
+                        "type": "text",
+                        "token": "Got it."
+                    }))
+                
                 # Generate intelligent response using GPT-4
                 try:
                     from ..services.gpt_service import GPTService
