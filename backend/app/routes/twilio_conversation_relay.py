@@ -174,17 +174,10 @@ async def websocket_endpoint(websocket: WebSocket):
                     except Exception as e:
                         logger.warning(f"Could not save transcript: {e}")
                 
-                # Send quick acknowledgment for first message to reduce perceived delay
-                if len(transcript) == 1:  # First user message
-                    await websocket.send_text(json.dumps({
-                        "type": "text",
-                        "token": "Got it."
-                    }))
-                
-                # Generate intelligent response using GPT-4
+                # Use hybrid response service (instant for common queries, GPT for complex)
                 try:
-                    from ..services.gpt_service import GPTService
-                    gpt_service = GPTService()
+                    from ..services.response_service import ResponseService
+                    response_service = ResponseService()
                     
                     # Get caller info if available
                     caller_info = {
@@ -192,14 +185,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         "call_sid": call_sid
                     }
                     
-                    gpt_result = await gpt_service.generate_property_response(
+                    response_text, extracted_info, used_gpt = await response_service.get_response(
                         user_message=user_message,
                         conversation_history=transcript,
                         caller_info=caller_info
                     )
                     
-                    response_text = gpt_result["response"]
-                    extracted_info = gpt_result.get("extracted_info", {})
+                    # Log whether we used GPT or gave instant response
+                    if used_gpt:
+                        logger.info(f"Used GPT-4 for: {user_message[:50]}...")
+                    else:
+                        logger.info(f"Instant response for: {user_message[:50]}...")
                     
                     # Log and save extracted information
                     if extracted_info:
@@ -243,8 +239,9 @@ async def websocket_endpoint(websocket: WebSocket):
                                 logger.warning(f"Could not save extracted info to database: {e}")
                     
                 except Exception as e:
-                    logger.warning(f"GPT-4 failed, using fallback: {str(e)}")
+                    logger.warning(f"Response service failed, using basic fallback: {str(e)}")
                     response_text = generate_property_response(user_message)
+                    extracted_info = {}
                 
                 # Add assistant response to transcript
                 transcript.append({"speaker": "assistant", "message": response_text})
