@@ -19,8 +19,17 @@ function Calls() {
       
       if (data.success && data.calls) {
         const transformedCalls = data.calls.map(call => {
-          // Check if call already has analysis data from database
-          const hasAnalysisData = call.caller_name && call.caller_name !== 'Unknown Caller'
+          // Parse stored analysis from database
+          let storedAnalysis = null
+          if (call.ai_response) {
+            try {
+              storedAnalysis = JSON.parse(call.ai_response)
+            } catch (e) {
+              // ai_response might be old text format, ignore parse errors
+            }
+          }
+          
+          const hasAnalysisData = storedAnalysis || (call.caller_name && call.caller_name !== 'Unknown Caller')
           
           return {
             id: call.id,
@@ -34,8 +43,8 @@ function Calls() {
             callId: call.call_id,
             transcript: call.transcript,
             rawCall: call,
-            analysis: null, // Will be populated when clicked
-            isAnalyzed: hasAnalysisData // True if database already has analysis
+            analysis: storedAnalysis, // Load stored analysis from database
+            isAnalyzed: !!storedAnalysis // True if we have stored analysis
           }
         })
         setCalls(transformedCalls)
@@ -100,8 +109,8 @@ function Calls() {
 
     setExpandedCall(call.id)
     
-    // Analyze if not already analyzed
-    if (!call.isAnalyzed) {
+    // Only analyze if we don't have stored analysis
+    if (!call.analysis) {
       await analyzeCall(call.id)
     }
   }
@@ -241,13 +250,18 @@ function Calls() {
               {/* Expanded Call Details */}
               {expandedCall === call.id && (
                 <div className="border-t border-gray-200 p-4 bg-gray-50">
-                  {call.analysis ? (
+                  {(call.analysis || analyzingCall === call.id) ? (
                     <div className="space-y-4">
                       {/* Call Summary */}
-                      <div>
-                        <h4 className="font-medium text-navy mb-2">Call Summary</h4>
-                        <div className="bg-white rounded-lg p-3 text-sm">
-                          <p className="text-gray-700 mb-3">{call.analysis.call_summary}</p>
+                      {analyzingCall === call.id ? (
+                        <div className="text-center py-4">
+                          <div className="text-gray-500">Analyzing call with GPT...</div>
+                        </div>
+                      ) : call.analysis ? (
+                        <div>
+                          <h4 className="font-medium text-navy mb-2">Call Summary</h4>
+                          <div className="bg-white rounded-lg p-3 text-sm">
+                            <p className="text-gray-700 mb-3">{call.analysis.call_summary}</p>
                           
                           {call.analysis.key_highlights?.length > 0 && (
                             <div className="mb-3">
@@ -332,6 +346,8 @@ function Calls() {
                           )}
                         </div>
                       </div>
+                        </div>
+                      ) : null}
 
                       {/* Action Buttons */}
                       <div className="flex space-x-2 pt-2">

@@ -139,7 +139,11 @@ class SupabaseService:
             else:
                 updates["lead_score"] = 35
             
-            # Store the full analysis as JSON in a metadata field if it exists
+            # Store the full analysis as JSON in the ai_response field for now
+            # (we can add a proper analysis column later)
+            if analysis:
+                updates["ai_response"] = json.dumps(analysis)
+            
             if updates:
                 updates["updated_at"] = datetime.utcnow().isoformat()
                 response = self.client.table("calls").update(updates).eq("id", call_id).execute()
