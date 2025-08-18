@@ -90,15 +90,41 @@ function Calls() {
     setAnalyzingCall(null)
   }
 
-  const archiveCall = (callId) => {
+  const archiveCall = async (callId) => {
     if (confirm('Archive this call? It will be hidden from the main list.')) {
-      setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+      try {
+        const response = await fetch(`${API_URL}/api/calls/${callId}/archive`, {
+          method: 'PUT'
+        })
+        
+        if (response.ok) {
+          setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+        } else {
+          alert('Failed to archive call')
+        }
+      } catch (error) {
+        console.error('Error archiving call:', error)
+        alert('Failed to archive call')
+      }
     }
   }
 
-  const deleteCall = (callId) => {
+  const deleteCall = async (callId) => {
     if (confirm('Are you sure you want to permanently delete this call?')) {
-      setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+      try {
+        const response = await fetch(`${API_URL}/api/calls/${callId}`, {
+          method: 'DELETE'
+        })
+        
+        if (response.ok) {
+          setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
+        } else {
+          alert('Failed to delete call')
+        }
+      } catch (error) {
+        console.error('Error deleting call:', error)
+        alert('Failed to delete call')
+      }
     }
   }
 
@@ -122,13 +148,33 @@ function Calls() {
     }
   }
 
-  const bulkDeleteCalls = () => {
+  const bulkDeleteCalls = async () => {
     if (selectedCalls.size === 0) return
     
-    if (confirm(`Are you sure you want to delete ${selectedCalls.size} selected calls?`)) {
-      setCalls(prevCalls => prevCalls.filter(call => !selectedCalls.has(call.id)))
-      setSelectedCalls(new Set())
-      setBulkMode(false)
+    if (confirm(`Are you sure you want to permanently delete ${selectedCalls.size} selected calls?`)) {
+      try {
+        const callIds = Array.from(selectedCalls)
+        
+        const response = await fetch(`${API_URL}/api/calls/bulk-delete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ call_ids: callIds })
+        })
+        
+        if (response.ok) {
+          setCalls(prevCalls => prevCalls.filter(call => !selectedCalls.has(call.id)))
+          setSelectedCalls(new Set())
+          setBulkMode(false)
+          alert(`Successfully deleted ${callIds.length} calls`)
+        } else {
+          alert('Failed to delete some calls')
+        }
+      } catch (error) {
+        console.error('Error bulk deleting calls:', error)
+        alert('Failed to delete calls')
+      }
     }
   }
 

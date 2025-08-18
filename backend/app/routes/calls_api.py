@@ -474,3 +474,93 @@ async def get_dashboard_stats() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error fetching dashboard stats: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch dashboard statistics")
+
+
+@router.delete("/{call_id}")
+async def delete_call(call_id: str) -> Dict[str, Any]:
+    """
+    Delete a call and all associated data
+    """
+    try:
+        supabase = SupabaseService()
+        
+        # Delete the call (cascading deletes will handle transcripts, etc.)
+        response = supabase.client.table("calls").delete().eq("id", call_id).execute()
+        
+        if response.data:
+            return {
+                "success": True,
+                "message": f"Call {call_id} deleted successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Call not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting call: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete call")
+
+
+from pydantic import BaseModel
+
+class BulkDeleteRequest(BaseModel):
+    call_ids: List[str]
+
+@router.post("/bulk-delete")
+async def bulk_delete_calls(
+    request: BulkDeleteRequest
+) -> Dict[str, Any]:
+    """
+    Delete multiple calls at once
+    """
+    try:
+        call_ids = request.call_ids
+        if not call_ids:
+            raise HTTPException(status_code=400, detail="No call IDs provided")
+        
+        supabase = SupabaseService()
+        
+        # Delete all calls in the list
+        response = supabase.client.table("calls").delete().in_("id", call_ids).execute()
+        
+        return {
+            "success": True,
+            "deleted_count": len(call_ids),
+            "message": f"Successfully deleted {len(call_ids)} calls"
+        }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error bulk deleting calls: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to bulk delete calls")
+
+
+@router.put("/{call_id}/archive")
+async def archive_call(call_id: str) -> Dict[str, Any]:
+    """
+    Archive a call (mark as archived without deleting)
+    """
+    try:
+        supabase = SupabaseService()
+        
+        # Update call status to archived
+        response = supabase.client.table("calls").update({
+            "status": "archived",
+            "updated_at": datetime.utcnow().isoformat()
+        }).eq("id", call_id).execute()
+        
+        if response.data:
+            return {
+                "success": True,
+                "message": f"Call {call_id} archived successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Call not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error archiving call: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to archive call")
