@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Phone, Clock, ChevronDown, ChevronUp, Trash2, Archive, MessageSquare } from 'lucide-react'
+import { Phone, Clock, User, MessageSquare, TrendingUp, Calendar } from 'lucide-react'
 import { API_URL } from '../config'
 
 function Calls() {
@@ -14,12 +14,13 @@ function Calls() {
 
   const fetchCalls = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/calls/recent?limit=50`)
+      const response = await fetch(`${API_URL}/api/calls/recent?limit=20`)
       const data = await response.json()
       
       if (data.success && data.calls) {
+        // Transform database calls to frontend format
         const transformedCalls = data.calls.map(call => {
-          // Parse stored analysis from database
+          // Parse stored GPT analysis from ai_response field
           let storedAnalysis = null
           if (call.ai_response) {
             try {
@@ -29,22 +30,25 @@ function Calls() {
             }
           }
           
-          const hasAnalysisData = storedAnalysis || (call.caller_name && call.caller_name !== 'Unknown Caller')
+          // Use caller_name from database if available (from GPT analysis)
+          const callerName = call.caller_name || extractNameFromTranscript(call.transcript) || 'Unknown Caller'
+          
+          // Use property_mentioned from database if available (from GPT analysis)  
+          const property = call.property_mentioned || extractPropertyFromTranscript(call.transcript) || 'No property mentioned'
           
           return {
             id: call.id,
             phoneNumber: call.phone_number || 'Unknown',
-            callerName: call.caller_name || 'Unknown Caller',
+            callerName: callerName,
             duration: call.duration || 0,
             timestamp: new Date(call.created_at),
-            property: call.property_mentioned || (hasAnalysisData ? 'Analysis available' : 'Click to analyze'),
+            property: property,
             leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 60 ? 'Warm' : 'Cold',
             status: call.call_status || call.status || 'completed',
             callId: call.call_id,
-            transcript: call.transcript,
             rawCall: call,
-            analysis: storedAnalysis, // Load stored analysis from database
-            isAnalyzed: !!storedAnalysis // True if we have stored analysis
+            analysis: storedAnalysis, // LOAD STORED ANALYSIS FROM DATABASE
+            transcript: call.transcript
           }
         })
         setCalls(transformedCalls)
@@ -53,6 +57,91 @@ function Calls() {
     } catch (error) {
       console.error('Error fetching calls:', error)
       setLoading(false)
+    }
+  }
+
+  // Enhanced function to extract name from transcript or individual messages
+  const extractNameFromTranscript = (transcript, detailedEntries = null) => {
+    // List of words that are NOT names (to filter out bad extractions)
+    const excludeWords = ['interested', 'looking', 'calling', 'here', 'ready', 'sorry', 'thanks', 'hello', 'hi', 'good', 'well', 'yeah', 'yes', 'no', 'okay', 'sure', 'maybe', 'just', 'also', 'really', 'very']
+    
+    const isValidName = (word) => {
+      return word && 
+             word.length >= 2 && 
+             word.length <= 20 && 
+             !excludeWords.includes(word.toLowerCase()) &&
+             /^[A-Za-z]+$/.test(word) // Only letters
+    }
+    
+    // First try the full transcript text
+    if (transcript) {
+      const nameMatch = transcript.match(/my name is (\w+)/i) || 
+                       transcript.match(/name is (\w+)/i) ||
+                       transcript.match(/this is (\w+)/i)
+      if (nameMatch && isValidName(nameMatch[1])) {
+        return nameMatch[1]
+      }
+    }
+    
+    // Then try individual message entries (more specific patterns)
+    if (detailedEntries && detailedEntries.length > 0) {
+      for (const entry of detailedEntries) {
+        if (entry.speaker === 'user') {
+          const nameMatch = entry.message.match(/my name is (\w+)/i) || 
+                           entry.message.match(/name is (\w+)/i) ||
+                           entry.message.match(/this is (\w+)/i) ||
+                           entry.message.match(/I'm (\w+) and/i) || // Only if followed by "and"
+                           entry.message.match(/I'm (\w+),/i) || // If followed by comma
+                           entry.message.match(/(\w+) and my phone/i) || // "Ray and my phone number"
+                           entry.message.match(/so my name is (\w+)/i)
+          if (nameMatch && isValidName(nameMatch[1])) {
+            return nameMatch[1]
+          }
+        }
+      }
+    }
+    
+    return null
+  }
+
+  // Enhanced function to extract property from transcript
+  const extractPropertyFromTranscript = (transcript, detailedEntries = null) => {
+    const checkForProperty = (text) => {
+      if (!text) return null
+      const textLower = text.toLowerCase()
+      if ((textLower.includes('123') && textLower.includes('main')) || textLower.includes('123 main')) return '123 Main Street'
+      if ((textLower.includes('456') && textLower.includes('oak')) || textLower.includes('456 oak')) return '456 Oak Avenue' 
+      if ((textLower.includes('789') && textLower.includes('pine')) || textLower.includes('789 pine')) return '789 Pine Lane'
+      return null
+    }
+    
+    // Check full transcript first
+    let property = checkForProperty(transcript)
+    if (property) return property
+    
+    // Check individual messages
+    if (detailedEntries && detailedEntries.length > 0) {
+      for (const entry of detailedEntries) {
+        property = checkForProperty(entry.message)
+        if (property) return property
+      }
+    }
+    
+    return null
+  }
+
+
+  const toggleCallExpansion = async (call) => {
+    if (expandedCall === call.id) {
+      setExpandedCall(null)
+      return
+    }
+
+    setExpandedCall(call.id)
+    
+    // Analyze if not already analyzed
+    if (!call.analysis && !call.rawCall.ai_response) {
+      await analyzeCall(call.id)
     }
   }
 
@@ -68,29 +157,15 @@ function Calls() {
       const analysis = await analysisResponse.json()
       
       if (details.success && analysis.success) {
-        // Calculate actual duration from transcript
-        const transcriptEntries = details.transcript?.entries || []
-        let actualDuration = 0
-        if (transcriptEntries.length >= 2) {
-          const firstMessage = new Date(transcriptEntries[0].timestamp)
-          const lastMessage = new Date(transcriptEntries[transcriptEntries.length - 1].timestamp)
-          actualDuration = Math.floor((lastMessage - firstMessage) / 1000)
-        }
-
         // Update the call with analysis results
         setCalls(prevCalls => 
           prevCalls.map(call => 
             call.id === callId ? {
               ...call,
-              callerName: analysis.analysis.caller_name || call.callerName,
-              property: analysis.analysis.property_interests?.length > 0 ? 
-                       analysis.analysis.property_interests.join(', ') : 'No property mentioned',
-              leadScore: analysis.analysis.lead_quality === 'hot' ? 'Hot' : 
-                        analysis.analysis.lead_quality === 'warm' ? 'Warm' : 'Cold',
-              duration: Math.max(actualDuration, call.duration),
               analysis: analysis.analysis,
               transcript: details.transcript,
-              isAnalyzed: true
+              property_inquiries: details.property_inquiries,
+              lead_info: details.lead_info
             } : call
           )
         )
@@ -101,42 +176,6 @@ function Calls() {
     setAnalyzingCall(null)
   }
 
-  const toggleCallExpansion = async (call) => {
-    if (expandedCall === call.id) {
-      setExpandedCall(null)
-      return
-    }
-
-    setExpandedCall(call.id)
-    
-    // Only analyze if we don't have stored analysis
-    if (!call.analysis) {
-      await analyzeCall(call.id)
-    }
-  }
-
-
-  const archiveCall = async (callId) => {
-    if (confirm('Archive this call? It will be hidden from the main list.')) {
-      try {
-        // TODO: Add API call to mark as archived
-        setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
-      } catch (error) {
-        console.error('Error archiving call:', error)
-      }
-    }
-  }
-
-  const deleteCall = async (callId) => {
-    if (confirm('Are you sure you want to permanently delete this call?')) {
-      try {
-        // TODO: Add API call to delete call
-        setCalls(prevCalls => prevCalls.filter(call => call.id !== callId))
-      } catch (error) {
-        console.error('Error deleting call:', error)
-      }
-    }
-  }
 
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60)
@@ -179,219 +218,152 @@ function Calls() {
 
   return (
     <div className="max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-navy">Recent Calls</h2>
-        <button 
-          onClick={fetchCalls}
-          className="px-4 py-2 bg-coral text-white rounded-lg hover:bg-coral-dark transition-colors"
-        >
-          Refresh
-        </button>
-      </div>
-
-      {calls.length === 0 ? (
-        <div className="bg-white rounded-xl p-8 text-center">
-          <MessageSquare className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">No calls yet</p>
-          <p className="text-sm text-gray-500 mt-2">Calls will appear here when customers call CORA</p>
+      {/* Calls List - Single Column */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-bold text-navy">Recent Calls</h2>
+          <button 
+            onClick={fetchCalls}
+            className="px-4 py-2 bg-coral text-white rounded-lg hover:bg-coral-dark transition-colors"
+          >
+            Refresh
+          </button>
         </div>
-      ) : (
-        <div className="space-y-4">
-          {calls.map((call) => (
-            <div
-              key={call.id}
-              className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"
-            >
-              {/* Call Card Header */}
-              <div 
-                className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                onClick={() => toggleCallExpansion(call)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <div className="p-2 bg-cream rounded-lg">
-                      <Phone className="w-5 h-5 text-coral" />
-                    </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <h3 className="font-semibold text-navy">
-                          {analyzingCall === call.id ? 'Analyzing...' : call.callerName}
-                        </h3>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getLeadScoreColor(call.leadScore)}`}>
-                          {call.leadScore}
-                        </span>
+
+        {calls.length === 0 ? (
+          <div className="bg-white rounded-xl p-8 text-center">
+            <MessageSquare className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600">No calls yet</p>
+            <p className="text-sm text-gray-500 mt-2">Calls will appear here when customers call your Synthflow number</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {calls.map((call) => (
+              <div key={call.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                {/* Call Card Header */}
+                <div 
+                  className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                  onClick={() => toggleCallExpansion(call)}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start space-x-3">
+                      <div className="p-2 bg-cream rounded-lg">
+                        <Phone className="w-5 h-5 text-coral" />
                       </div>
-                      <p className="text-sm text-gray-600">{call.phoneNumber}</p>
-                      <p className="text-sm text-gray-500">
-                        Property: <span className="font-medium">{call.property}</span>
-                      </p>
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h3 className="font-semibold text-navy">
+                            {analyzingCall === call.id ? 'Analyzing...' : call.callerName}
+                          </h3>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getLeadScoreColor(call.leadScore)}`}>
+                            {call.leadScore}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">{call.phoneNumber}</p>
+                        <p className="text-sm text-gray-500 mt-1">
+                          Property: <span className="font-medium">{call.property}</span>
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <div className="flex items-center space-x-3">
                     <div className="text-right">
                       <p className="text-sm text-gray-500">{formatTime(call.timestamp)}</p>
-                      <p className="text-sm text-gray-400">
+                      <p className="text-sm text-gray-400 mt-1">
                         <Clock className="w-4 h-4 inline mr-1" />
                         {formatDuration(call.duration)}
                       </p>
                     </div>
-                    
-                    {expandedCall === call.id ? (
-                      <ChevronUp className="w-5 h-5 text-gray-400" />
-                    ) : (
-                      <ChevronDown className="w-5 h-5 text-gray-400" />
-                    )}
                   </div>
                 </div>
-              </div>
 
-              {/* Expanded Call Details */}
-              {expandedCall === call.id && (
-                <div className="border-t border-gray-200 p-4 bg-gray-50">
-                  {(call.analysis || analyzingCall === call.id) ? (
-                    <div className="space-y-4">
-                      {/* Call Summary */}
-                      {analyzingCall === call.id ? (
-                        <div className="text-center py-4">
-                          <div className="text-gray-500">Analyzing call with GPT...</div>
-                        </div>
-                      ) : call.analysis ? (
+                {/* Expanded Details */}
+                {expandedCall === call.id && (
+                  <div className="border-t border-gray-200 p-4 bg-gray-50">
+                    {analyzingCall === call.id ? (
+                      <div className="text-center py-8">
+                        <div className="text-gray-500">Analyzing call with GPT...</div>
+                      </div>
+                    ) : call.analysis ? (
+                      <div className="space-y-4">
+                        {/* Call Summary */}
                         <div>
                           <h4 className="font-medium text-navy mb-2">Call Summary</h4>
                           <div className="bg-white rounded-lg p-3 text-sm">
                             <p className="text-gray-700 mb-3">{call.analysis.call_summary}</p>
-                          
-                          {call.analysis.key_highlights?.length > 0 && (
-                            <div className="mb-3">
-                              <p className="text-xs font-medium text-gray-600 mb-2">Key Points:</p>
-                              <ul className="text-xs text-gray-600 space-y-1">
-                                {call.analysis.key_highlights.map((highlight, idx) => (
-                                  <li key={idx} className="flex items-start">
-                                    <span className="w-1.5 h-1.5 bg-coral rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
-                                    {highlight}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          
-                          {call.analysis.next_actions?.length > 0 && (
-                            <div>
-                              <p className="text-xs font-medium text-green-600 mb-2">Suggested Actions:</p>
-                              <ul className="text-xs text-green-600 space-y-1">
-                                {call.analysis.next_actions.map((action, idx) => (
-                                  <li key={idx} className="flex items-start">
-                                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
-                                    {action}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Contact & Lead Info */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="bg-white rounded-lg p-3">
-                          <h5 className="text-xs font-medium text-gray-600 mb-2">Contact Details</h5>
-                          {call.analysis.caller_name && (
-                            <p className="text-sm"><span className="font-medium">Name:</span> {call.analysis.caller_name}</p>
-                          )}
-                          {call.analysis.phone_number && (
-                            <p className="text-sm"><span className="font-medium">Phone:</span> {call.analysis.phone_number}</p>
-                          )}
-                          {call.analysis.email && (
-                            <p className="text-sm"><span className="font-medium">Email:</span> {call.analysis.email}</p>
-                          )}
-                        </div>
-                        
-                        <div className="bg-white rounded-lg p-3">
-                          <h5 className="text-xs font-medium text-gray-600 mb-2">Requirements</h5>
-                          {call.analysis.budget_mentioned && (
-                            <p className="text-sm"><span className="font-medium">Budget:</span> ${call.analysis.budget_mentioned.toLocaleString()}</p>
-                          )}
-                          {call.analysis.bedrooms_wanted && (
-                            <p className="text-sm"><span className="font-medium">Bedrooms:</span> {call.analysis.bedrooms_wanted}</p>
-                          )}
-                          {call.analysis.timeline && (
-                            <p className="text-sm"><span className="font-medium">Timeline:</span> {call.analysis.timeline}</p>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Full Conversation */}
-                      <div>
-                        <h4 className="font-medium text-navy mb-2">Conversation</h4>
-                        <div className="bg-white rounded-lg p-3 max-h-64 overflow-y-auto space-y-2">
-                          {call.transcript?.entries?.length > 0 ? (
-                            call.transcript.entries.map((entry, idx) => (
-                              <div key={idx} className={`${entry.speaker === 'assistant' ? 'text-right' : 'text-left'}`}>
-                                <div className={`inline-block px-3 py-2 rounded-lg text-sm max-w-xs ${
-                                  entry.speaker === 'assistant' 
-                                    ? 'bg-coral text-white' 
-                                    : 'bg-gray-100 text-gray-800'
-                                }`}>
-                                  {entry.message}
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1">
-                                  {entry.speaker === 'assistant' ? 'CORA' : 'Caller'} • {new Date(entry.timestamp).toLocaleTimeString()}
-                                </p>
+                            
+                            {call.analysis.key_highlights?.length > 0 && (
+                              <div className="mb-3">
+                                <p className="text-xs font-medium text-gray-600 mb-2">Key Points:</p>
+                                <ul className="text-xs text-gray-600 space-y-1">
+                                  {call.analysis.key_highlights.map((highlight, idx) => (
+                                    <li key={idx} className="flex items-start">
+                                      <span className="w-1.5 h-1.5 bg-coral rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                                      {highlight}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
-                            ))
-                          ) : (
-                            <p className="text-gray-500 text-sm text-center py-4">No transcript available</p>
-                          )}
+                            )}
+                            
+                            {call.analysis.next_actions?.length > 0 && (
+                              <div>
+                                <p className="text-xs font-medium text-green-600 mb-2">Suggested Actions:</p>
+                                <ul className="text-xs text-green-600 space-y-1">
+                                  {call.analysis.next_actions.map((action, idx) => (
+                                    <li key={idx} className="flex items-start">
+                                      <span className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1.5 mr-2 flex-shrink-0"></span>
+                                      {action}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                        </div>
-                      ) : null}
 
-                      {/* Action Buttons */}
-                      <div className="flex space-x-2 pt-2">
-                        <button className="flex-1 px-4 py-2 bg-coral text-white rounded-lg text-sm hover:bg-coral-dark transition-colors">
-                          Schedule Follow-up
-                        </button>
-                        <button className="flex-1 px-4 py-2 bg-cream text-navy rounded-lg text-sm hover:bg-cream-dark transition-colors">
-                          Send Details
-                        </button>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); archiveCall(call.id); }}
-                          className="px-3 py-2 bg-gray-200 text-gray-600 rounded-lg text-sm hover:bg-gray-300 transition-colors"
-                        >
-                          <Archive className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); deleteCall(call.id); }}
-                          className="px-3 py-2 bg-red-100 text-red-600 rounded-lg text-sm hover:bg-red-200 transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {/* Full Conversation */}
+                        <div>
+                          <h4 className="font-medium text-navy mb-2">Conversation</h4>
+                          <div className="bg-white rounded-lg p-3 max-h-64 overflow-y-auto space-y-2">
+                            {call.transcript?.entries?.length > 0 ? (
+                              call.transcript.entries.map((entry, idx) => (
+                                <div key={idx} className={`${entry.speaker === 'assistant' ? 'text-right' : 'text-left'}`}>
+                                  <div className={`inline-block px-3 py-2 rounded-lg text-sm max-w-xs ${
+                                    entry.speaker === 'assistant' 
+                                      ? 'bg-coral text-white' 
+                                      : 'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {entry.message}
+                                  </div>
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    {entry.speaker === 'assistant' ? 'CORA' : 'Caller'} • {new Date(entry.timestamp).toLocaleTimeString()}
+                                  </p>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-gray-500 text-sm text-center py-4">No transcript available</p>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8">
-                      <div className="text-gray-500 mb-2">
-                        {analyzingCall === call.id ? 'Analyzing call with GPT...' : 'Click to analyze this call'}
-                      </div>
-                      {analyzingCall !== call.id && (
+                    ) : (
+                      <div className="text-center py-8">
+                        <div className="text-gray-500 mb-2">Click to analyze this call</div>
                         <button 
-                          onClick={() => analyzeCall(call.id)}
+                          onClick={(e) => { e.stopPropagation(); analyzeCall(call.id); }}
                           className="px-4 py-2 bg-coral text-white rounded-lg text-sm hover:bg-coral-dark transition-colors"
                         >
                           Analyze Call
                         </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
     </div>
   )
 }
