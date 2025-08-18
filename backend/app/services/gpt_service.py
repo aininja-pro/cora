@@ -39,12 +39,12 @@ class GPTService:
                 caller_info
             )
             
-            # Call GPT-4
+            # Call GPT-4o-mini for faster responses
             response = await self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o-mini",  # Faster and cheaper than gpt-4
                 messages=messages,
                 temperature=0.7,
-                max_tokens=300,
+                max_tokens=200,  # Shorter responses for phone calls
                 functions=[
                     {
                         "name": "extract_lead_info",
