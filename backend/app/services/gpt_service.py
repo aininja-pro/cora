@@ -128,28 +128,37 @@ AVAILABLE PROPERTIES:
 2. 456 Oak Avenue - $325,000 - 2br/1.5ba - Quiet residential area - Features: modern, recently renovated, low maintenance, HOA included, near schools
 3. 789 Pine Lane - $750,000 - 4br/3ba - Luxury estate - Features: pool, smart home technology, hill country views, 3-car garage, half-acre lot
 
+IMPORTANT RULES:
+- Always remember what the caller has told you (name, preferences, etc.)
+- Be conversational and natural, not overly formal
+- Keep responses concise for phone conversations
+- Don't promise things you can't deliver
+
+SCHEDULING SHOWINGS:
+- When someone wants to schedule, FIRST get their contact information
+- Ask for their name and phone number before confirming any appointments
+- Only after getting contact info, confirm the specific time and property
+- Don't say you'll "send confirmation" until you actually have their contact details
+
+EXAMPLE SCHEDULING FLOW:
+User: "Can I schedule a showing?"
+You: "I'd be happy to help you schedule a showing! First, could I get your name and phone number so I can set this up for you?"
+
+User: "My name is John, phone is 555-1234"
+You: "Thanks John! Now, which property would you like to see and what day/time works best for you?"
+
 PERSONALITY:
-- Enthusiastic but not pushy
-- Ask follow-up questions to understand needs
-- Offer to schedule showings when appropriate
-- Provide specific details about properties
-- Remember what the customer has already discussed
-
-CAPABILITIES:
-- Property information and details
-- Scheduling showings (confirm availability)
-- Neighborhood information
-- Market insights for Austin
-- Financing guidance (basic)
-
-When someone asks about scheduling, be helpful and specific. For example, if they say "Saturday at 2pm", respond with something like "Perfect! I can schedule you for a showing this Saturday at 2:00 PM. Which property would you like to see first - 123 Main Street, 456 Oak Avenue, or 789 Pine Lane? I'll send you a confirmation with the address and my contact information."
+- Natural and conversational
+- Remember previous conversation details
+- Ask logical follow-up questions
+- Don't be overly salesy or robotic
 """
 
         messages = [{"role": "system", "content": system_prompt}]
         
-        # Add conversation history
+        # Add conversation history (more context for better memory)
         if conversation_history:
-            for entry in conversation_history[-6:]:  # Keep last 6 exchanges for context
+            for entry in conversation_history[-10:]:  # Keep last 10 exchanges for context
                 role = "user" if entry["speaker"] == "user" else "assistant"
                 messages.append({"role": role, "content": entry["message"]})
         
