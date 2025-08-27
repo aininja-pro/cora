@@ -47,7 +47,7 @@ export async function createEphemeralSession(instructions: string, voice: string
           silence_duration_ms: 200
         },
         input_audio_transcription: {
-          model: "whisper-1"
+          model: "gpt-4o-mini-transcribe"
         },
         tools: require('./tools').TOOLS,
         tool_choice: "auto"

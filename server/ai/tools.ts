@@ -178,7 +178,8 @@ export function validateArgs(
 /** ------------------ TOOL HANDLERS (with real Supabase integration) ------------------ **/
 export type ToolContext = {
   tenantId?: string;
-  // add db clients here: supabase, crm, calendars, etc.
+  callId?: string;
+  backendClient?: any; // BackendClient from lib/backendClient
 };
 
 export async function runTool(
@@ -187,6 +188,49 @@ export async function runTool(
   ctx: ToolContext
 ): Promise<ToolResult> {
   try {
+    // CRITICAL: Use backend client if available, fallback to local mock
+    if (ctx.backendClient) {
+      console.log(`🔧 [${ctx.callId}] Executing ${name} via backend API`);
+      
+      try {
+        // Log tool call event
+        await ctx.backendClient.addToolCall(name, args);
+        
+        // Execute via backend
+        const result = await ctx.backendClient.executeTool(name, args);
+        
+        // Log tool result event
+        await ctx.backendClient.addToolResult(name, result);
+        
+        console.log(`✅ [${ctx.callId}] Tool ${name} completed via backend`);
+        return result;
+        
+      } catch (error) {
+        console.error(`❌ [${ctx.callId}] Backend tool execution failed:`, error);
+        
+        // Log error event
+        try {
+          await ctx.backendClient.addStatus("error", {
+            phase: "tool_execution",
+            tool: name,
+            error: String(error)
+          });
+        } catch {}
+        
+        return {
+          ok: false,
+          error: {
+            code: "TOOL_FAILED",
+            message: "Backend service unavailable",
+            retryable: false
+          }
+        };
+      }
+    }
+    
+    // Fallback to local mock execution
+    console.log(`⚠️ [${ctx.callId || 'unknown'}] Using local mock for ${name} (no backend client)`);
+    
     switch (name) {
       case "search_properties": {
         // Real Supabase integration for property search

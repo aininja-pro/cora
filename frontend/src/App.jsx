@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react'
 import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
 import Properties from './pages/Properties'
-import Calls from './pages/Calls'
+import CallsSimple from './pages/CallsSimple'
+import CallDetail from './pages/CallDetail'
 import Layout from './components/Layout'
 
 function App() {
@@ -70,7 +71,17 @@ function App() {
           element={
             isAuthenticated ? 
               <Layout onLogout={handleLogout}>
-                <Calls />
+                <CallsSimple />
+              </Layout> : 
+              <Navigate to="/" />
+          }
+        />
+        <Route
+          path="/calls/:callId"
+          element={
+            isAuthenticated ? 
+              <Layout onLogout={handleLogout}>
+                <CallDetail />
               </Layout> : 
               <Navigate to="/" />
           }

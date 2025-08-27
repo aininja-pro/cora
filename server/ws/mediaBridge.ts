@@ -12,7 +12,9 @@ import { sendAudioToRealtime, commitAudioBuffer } from '../ai/realtime';
 import { handleRealtimeEvent } from '../ai/realtimeHandlers';
 import { ToolContext } from '../ai/tools';
 import { startCallMetrics, recordFirstAudio, recordToolExecution, finishCallMetrics } from '../lib/metrics';
-import { db } from '../lib/database';
+import { BackendClient } from '../lib/backendClient';
+import { WhisperFeeder } from '../lib/whisperFeeder';
+import { bindRealtime, sendToOpenAI } from '../lib/realtimeSend';
 
 interface CallSession {
   callSid: string;
@@ -27,6 +29,8 @@ interface CallSession {
   hasBargein: boolean;
   dbCallId?: string;
   callerNumber?: string;
+  backendClient?: BackendClient;
+  whisperFeeder?: WhisperFeeder;
   bytesSinceCommit: number; // Track bytes for proper commit gating
   outgoingQueue: Buffer[]; // Queue for 160-byte μ-law frames
   outputTimer?: NodeJS.Timeout; // 20ms timer for paced audio output
@@ -34,6 +38,25 @@ interface CallSession {
 }
 
 const activeCalls = new Map<string, CallSession>();
+
+// Log the first ~50 media frames so we see shape/track
+let dbgFrames = 0;
+function dbgTwilio(msg: any) {
+  if (dbgFrames > 50) return;
+  if (msg?.event === "media") {
+    dbgFrames++;
+    const len = msg.media?.payload?.length ?? 0;
+    console.log("TW media", { track: msg.track ?? "(none)", len });
+  } else if (msg?.event === "start") {
+    console.log("TW start", {
+      track: msg.start?.track ?? "(none)",
+      fmt: msg.start?.mediaFormat,
+      streamSid: msg.start?.streamSid
+    });
+  } else if (msg?.event === "stop") {
+    console.log("TW stop");
+  }
+}
 
 /**
  * Handle new Twilio media stream WebSocket connection
@@ -56,12 +79,15 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
     try {
       const message = JSON.parse(Buffer.from(data as any).toString());
       
+      // CRITICAL: Debug what Twilio is actually sending (ChatGPT Step 1)
+      dbgTwilio(message);
+      
       // Handle the start event to get callSid and other details
       if (message.event === 'start') {
         console.log('📋 Raw start message:', JSON.stringify(message, null, 2));
         callSid = message.start?.callSid || message.callSid;
         const streamSid = message.streamSid || message.start?.streamSid;
-        const from = message.start?.customParameters?.from || 'unknown';
+        const from = message.start?.customParameters?.from || message.start?.from || 'unknown';
         const to = message.start?.customParameters?.to || message.start?.to;
         
         console.log(`🔗 Media stream started for call ${callSid}`);
@@ -84,6 +110,7 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
           lastCommit: Date.now(),
           isConnected: false,
           hasBargein: false,
+          callerNumber: from,  // Set caller number from extracted value
           bytesSinceCommit: 0, // Not used with server_vad but keeping for debugging
           outgoingQueue: [],
           outputTimer: undefined,
@@ -96,8 +123,8 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
         // Initialize OpenAI Realtime connection
         initializeRealtimeConnection(session);
         
-        // Initialize database tracking
-        initializeCallDatabase(session, message);
+        // Initialize call with Python backend
+        initializeCallWithBackend(session, message);
       } else if (callSid) {
         // Handle other events only if we have a session
         const existingSession = activeCalls.get(callSid);
@@ -146,6 +173,9 @@ Start with this exact greeting, then wait for the caller:
     realtimeWs.on('open', () => {
       console.log(`🤖 Realtime connected for call ${session.callSid}`);
       
+      // CRITICAL: Bind circuit breaker before any audio (ChatGPT Step 1)
+      bindRealtime(realtimeWs);
+      
       // Fix #1: Lock session config to 16kHz input/output (CRITICAL: prevents 24k→8k artifacts)
       const sessionConfig = {
         type: 'session.update',
@@ -158,20 +188,20 @@ Start with this exact greeting, then wait for the caller:
             silence_duration_ms: 300,
             prefix_padding_ms: 300
           },
-          input_audio_format: "pcm16",
-          output_audio_format: "g711_ulaw",
           input_audio_transcription: {
-            model: 'whisper-1'
+            model: "whisper-1",
+            language: "en"
           },
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
           tools: require('../ai/tools').TOOLS,
           tool_choice: 'auto'
         }
       };
       
-      // CRITICAL: Log exact session config (ChatGPT verification item #6)
+      // CRITICAL: Use circuit breaker to send session update (ChatGPT Step 2)
       console.log('📡 SESSION PINNING:', JSON.stringify(sessionConfig, null, 2));
-      console.log(`✅ LOCKED: input=pcm16 (reliable ASR), output=g711_ulaw (direct Twilio)`);
-      realtimeWs.send(JSON.stringify(sessionConfig));
+      sendToOpenAI(sessionConfig);
       
       session.isConnected = false; // Wait for session.updated confirmation
       
@@ -185,8 +215,25 @@ Start with this exact greeting, then wait for the caller:
       }));
     });
     
-    realtimeWs.on('message', (data) => {
-      handleRealtimeMessage(session, Buffer.from(data as any));
+    realtimeWs.on('message', (raw) => {
+      try {
+        const evt = JSON.parse(raw.toString());
+        if (evt.type === "session.updated") {
+          console.log("✅ session.updated:", evt.session?.input_audio_transcription);
+          
+          // Only initialize feeder after session confirmed
+          if (evt.session?.input_audio_transcription?.model === 'whisper-1') {
+            session.whisperFeeder = new WhisperFeeder(sendToOpenAI); // Use circuit breaker!
+            session.whisperFeeder.markReady(); // only start after this line appears once
+            console.log(`🎯 WHISPER FEEDER READY: Will process inbound audio with 16kHz/100ms timing`);
+            session.isConnected = true;
+          }
+        }
+        if (evt.type === "error") console.error("❌ Realtime error:", evt);
+      } catch {}
+      
+      // Also handle other events
+      handleRealtimeMessage(session, Buffer.from(raw as any));
     });
     
     realtimeWs.on('close', () => {
@@ -218,11 +265,15 @@ async function handleTwilioMessage(session: CallSession, data: any): Promise<voi
         
       case 'start':
         console.log(`🎬 Call started: ${session.callSid}`);
-        await initializeCallDatabase(session, message);
+        await initializeCallWithBackend(session, message);
         break;
         
       case 'media':
-        handleIncomingAudio(session, message);
+        // ChatGPT Step 2: Fix predicate - treat anything not explicitly outbound as inbound
+        if (message.event === "media" && message.track !== "outbound") {
+          session.whisperFeeder?.onInboundMulawBase64(message.media.payload);
+        }
+        // DO NOT call any other input_audio_buffer.append/commit anywhere else
         break;
         
       case 'stop':
@@ -246,11 +297,9 @@ async function handleTwilioMessage(session: CallSession, data: any): Promise<voi
 function handleIncomingAudio(session: CallSession, message: any): void {
   if (!session.realtimeWs || !session.isConnected) return;
   
-  // Half-duplex gating: don't process input while assistant is speaking (prevent feedback)
-  if (session.isAssistantSpeaking) {
-    console.log('🔇 Skipping input while CORA is speaking (half-duplex)');
-    return;
-  }
+  
+  // Note: WhisperFeeder handles inbound audio directly, this function now only needed for legacy processing
+  return;
   
   try {
     // CRITICAL: μ-law → PCM16 8k → band-limited upsample to 24k (ChatGPT's exact fix)
@@ -316,12 +365,11 @@ function handleIncomingAudio(session: CallSession, message: any): void {
     const base64First32 = audioBase64.substring(0, 32);
     console.log(`🔒 PCM16 MD5: ${bufferMD5}, base64[0:32]: ${base64First32}`);
     
-    // Send processed PCM16 to OpenAI
-    sendAudioToRealtime(session.realtimeWs, audioBase64);
+    // Note: WhisperFeeder now handles all audio processing
+    // This legacy path is disabled
     
-    // CRITICAL: Let server_vad handle commits (no manual commits)
-    console.log(`📡 Sent ${finalBuffer.length} bytes PCM16 - letting server_vad commit automatically`);
-    session.lastCommit = Date.now(); // Track for transcription timing
+    console.log(`📡 Sent ${finalBuffer.length} bytes PCM16 to OpenAI (VAD only)`);
+    session.lastCommit = Date.now();
     
   } catch (error) {
     console.error(`❌ Error processing incoming audio:`, error);
@@ -345,9 +393,11 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
       }
     };
     
-    // Create tool context
+    // Create tool context with backend client
     const ctx: ToolContext = {
-      tenantId: session.tenant?.agentDisplayName || 'default'
+      tenantId: session.tenant?.agentDisplayName || 'default',
+      callId: session.dbCallId,
+      backendClient: session.backendClient
     };
     
     // Use the new handler for tool-related events
@@ -359,16 +409,7 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
         console.log(`✅ Realtime session created for call ${session.callSid}`);
         break;
         
-      case 'session.updated':
-        console.log(`🔄 Session updated - full response:`, JSON.stringify(message.session, null, 2));
-        if (message.session?.input_audio_format === 'pcm16' && message.session?.output_audio_format === 'g711_ulaw') {
-          console.log(`✅ SESSION CONFIRMED: input=pcm16, output=g711_ulaw - ready for audio`);
-          console.log(`🎯 Server_vad: ${JSON.stringify(message.session.turn_detection)}`);
-          session.isConnected = true; // Now confirmed as PCM16
-        } else {
-          console.log(`❌ SESSION MISMATCH: input=${message.session?.input_audio_format}, output=${message.session?.output_audio_format}`);
-        }
-        break;
+      // session.updated now handled in realtimeWs.on('message') above
         
       case 'response.audio.delta':
         console.log(`🔊 CORA speaking: ${message.delta ? 'audio data' : 'no data'}`);
@@ -402,22 +443,24 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
         
       case 'conversation.item.input_audio_transcription.completed':
         const timeSinceCommit = Date.now() - session.lastCommit;
-        console.log(`🎤 TRANSCRIPTION ✅: "${message.transcript}" (${timeSinceCommit}ms after commit)`);
+        console.log(`🎤 [${session.dbCallId}] OPENAI TRANSCRIPTION ✅: "${message.transcript}" (${timeSinceCommit}ms after commit)`);
         console.log(`📊 ASR SANITY: Speaking 2-3s → transcription in ${timeSinceCommit}ms ✅`);
-        if (session.dbCallId) {
-          await db.addCallTurn({
-            call_id: session.dbCallId,
-            ts: new Date().toISOString(),
-            role: 'user',
-            text: message.transcript,
-            event_type: 'transcription_completed',
-            raw: message
-          });
+        
+        // CRITICAL: Stream final user turn to backend AND save to database
+        if (session.backendClient && message.transcript) {
+          try {
+            await session.backendClient.addTurn("user", message.transcript, timeSinceCommit);
+            console.log(`📝 [${session.dbCallId}] User turn streamed to backend`);
+          } catch (error) {
+            console.error(`❌ [${session.dbCallId}] Failed to stream user turn:`, error);
+          }
         }
         break;
         
       case 'conversation.item.input_audio_transcription.failed':
-        console.log(`❌ Transcription failed: ${message.error?.message || 'unknown error'}`);
+        console.log(`❌ [${session.dbCallId}] CRITICAL: Transcription failed: ${message.error?.message || 'unknown error'}`);
+        console.log(`🔍 [${session.dbCallId}] This explains why CORA loops - she can't hear your words!`);
+        console.log(`🔑 [${session.dbCallId}] Check OpenAI API key permissions for Whisper + Realtime`);
         break;
         
       case 'input_audio_buffer.committed':
@@ -445,22 +488,28 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
         break;
         
       case 'response.text.done':
-        console.log(`🤖 Assistant: "${message.text}"`);
-        if (session.dbCallId) {
-          await db.addCallTurn({
-            call_id: session.dbCallId,
-            ts: new Date().toISOString(),
-            role: 'assistant',
-            text: message.text,
-            event_type: 'response_text_done',
-            raw: message
-          });
+        console.log(`🤖 [${session.dbCallId}] Assistant: "${message.text}"`);
+        
+        // CRITICAL: Stream final assistant turn to backend  
+        if (session.backendClient && message.text) {
+          try {
+            await session.backendClient.addTurn("assistant", message.text);
+            console.log(`📝 [${session.dbCallId}] Assistant turn streamed to backend`);
+          } catch (error) {
+            console.error(`❌ [${session.dbCallId}] Failed to stream assistant turn:`, error);
+          }
         }
         break;
         
       case 'input_audio_buffer.speech_started':
-        console.log(`🗣️ Speech started - potential barge-in`);
+        console.log(`🗣️ [${session.dbCallId}] BARGE-IN: Caller started speaking - halting CORA output`);
         handleBargeIn(session);
+        
+        // CRITICAL: Force stop assistant speaking immediately
+        if (session.isAssistantSpeaking) {
+          session.isAssistantSpeaking = false;
+          console.log(`🛑 [${session.dbCallId}] FORCE STOPPED: Assistant interrupted by caller`);
+        }
         break;
         
       case 'input_audio_buffer.speech_stopped':
@@ -587,7 +636,7 @@ function startOutputTimer(session: CallSession): void {
  */
 function handleBargeIn(session: CallSession): void {
   if (!session.hasBargein) {
-    console.log(`🗣️ Barge-in detected for call ${session.callSid}`);
+    console.log(`🗣️ [${session.dbCallId}] Barge-in detected for call ${session.callSid}`);
     session.hasBargein = true;
     
     // Clear any queued assistant audio
@@ -595,33 +644,79 @@ function handleBargeIn(session: CallSession): void {
       event: 'clear'
     }));
     
-    // CRITICAL: Let server_vad handle barge-in commits (no manual commits)
+    // Stream barge-in event to backend
+    if (session.backendClient) {
+      try {
+        session.backendClient.addStatus("barge_in", {
+          twilio_sid: session.callSid,
+          timestamp: new Date().toISOString()
+        });
+        console.log(`📝 [${session.dbCallId}] Barge-in event streamed to backend`);
+      } catch (error) {
+        console.error(`❌ [${session.dbCallId}] Failed to stream barge-in event:`, error);
+      }
+    }
+    
     console.log(`🗣️ Barge-in detected - server_vad will handle buffer automatically`);
   }
 }
 
+/**
+ * Determine call outcome based on session activity
+ */
+function determineCallOutcome(session: CallSession): string {
+  // TODO: Analyze session events to determine actual outcome
+  // For now, return generic outcome
+  return "info"; // Default: informational call
+}
 
 /**
- * Initialize call in database
+ * Initialize call with Python backend
  */
-async function initializeCallDatabase(session: CallSession, startMessage: any): Promise<void> {
+async function initializeCallWithBackend(session: CallSession, startMessage: any): Promise<void> {
   try {
-    const callerNumber = startMessage.start?.caller || 'unknown';
+    // Extract caller number from multiple possible fields
+    const callerNumber = startMessage.start?.caller || 
+                        startMessage.start?.customParameters?.from || 
+                        startMessage.start?.from || 
+                        startMessage.from ||
+                        'unknown';
+    
+    console.log(`📞 [${session.callSid}] Extracted caller: ${callerNumber} from Twilio start event`);
     session.callerNumber = callerNumber;
     
-    const callId = await db.createCall({
+    // Create backend client and initialize call
+    const backendClient = new BackendClient();
+    
+    const createCallRequest = {
       tenant_id: session.tenant.agentDisplayName, // Use agent name as tenant ID for now
-      twilio_sid: session.callSid,
-      started_at: new Date().toISOString(),
       caller_number: callerNumber,
-      agent_number: session.toNumber
+      agent_number: session.toNumber,
+      twilio_sid: session.callSid
+    };
+    
+    console.log(`🔗 Creating call via backend API: ${JSON.stringify(createCallRequest)}`);
+    
+    const response = await backendClient.createCall(createCallRequest);
+    
+    session.dbCallId = response.call_id;
+    session.backendClient = backendClient;
+    
+    console.log(`📝 [${response.call_id}] Call initialized via backend - JWT acquired, tenant: ${response.tenant.name}`);
+    
+    // Send call_started status event
+    await backendClient.addStatus("call_started", {
+      caller_number: callerNumber,
+      agent_number: session.toNumber,
+      twilio_sid: session.callSid
     });
     
-    session.dbCallId = callId;
-    console.log(`📝 Initialized call in database: ${callId}`);
+    console.log(`🎤 [${session.dbCallId}] Ready for WhisperFeeder initialization after session.updated`);
     
   } catch (error) {
-    console.error(`❌ Error initializing call in database:`, error);
+    console.error(`❌ [${session.callSid}] Error initializing call with backend:`, error);
+    // Fallback to local logging if backend unavailable
+    session.dbCallId = `local_${Date.now()}`;
   }
 }
 
@@ -631,29 +726,36 @@ async function initializeCallDatabase(session: CallSession, startMessage: any): 
 async function cleanupCall(callSid: string): Promise<void> {
   const session = activeCalls.get(callSid);
   if (session) {
-    // Update call in database
-    if (session.dbCallId) {
+    // Send call end summary and trigger analysis
+    if (session.backendClient && session.dbCallId) {
       try {
-        await db.updateCall(session.dbCallId, {
-          ended_at: new Date().toISOString()
-        });
+        // Generate simple summary and outcome
+        const outcome = determineCallOutcome(session);
+        const summary = `Call with ${session.callerNumber || 'unknown caller'} ended after ${Math.round((Date.now() - session.lastCommit) / 1000)}s`;
+        const nextActions = ["Follow up within 24 hours", "Send property listings if requested"];
         
-        // Generate and save call summary
-        const summary = await db.generateCallSummary(session.dbCallId);
-        if (summary) {
-          await db.saveCallSummary({
-            call_id: session.dbCallId,
-            summary_json: summary,
-            score_lead_quality: Math.round(summary.confidence * 100),
-            next_actions: summary.next_actions,
-            properties_mentioned: summary.properties_mentioned
-          });
-        }
+        await session.backendClient.addSummary(outcome, summary, nextActions);
+        console.log(`📊 [${session.dbCallId}] Call summary sent to backend: ${outcome}`);
         
-        console.log(`📊 Generated summary for call ${session.dbCallId}`);
+        // Trigger GPT analysis for rich UI (async)
+        setTimeout(async () => {
+          try {
+            const response = await fetch(`${process.env.BACKEND_BASE_URL}/api/calls/${session.dbCallId}/analyze`, {
+              method: 'POST'
+            });
+            
+            if (response.ok) {
+              console.log(`🧠 [${session.dbCallId}] GPT analysis completed - call card will be enriched`);
+            } else {
+              console.log(`⚠️ [${session.dbCallId}] GPT analysis failed: ${response.status}`);
+            }
+          } catch (error) {
+            console.log(`❌ [${session.dbCallId}] GPT analysis error:`, error);
+          }
+        }, 2000); // Wait 2s for transcript to settle
         
       } catch (error) {
-        console.error(`❌ Error updating call in database:`, error);
+        console.error(`❌ [${session.dbCallId}] Error sending call summary:`, error);
       }
     }
     
@@ -667,6 +769,12 @@ async function cleanupCall(callSid: string): Promise<void> {
     // Close Realtime connection
     if (session.realtimeWs) {
       session.realtimeWs.close();
+    }
+    
+    // Flush and stop WhisperFeeder
+    if (session.whisperFeeder) {
+      session.whisperFeeder.flushAndStop();
+      console.log(`🎙️ WhisperFeeder flushed and stopped`);
     }
     
     // Finish metrics

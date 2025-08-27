@@ -61,6 +61,7 @@ router.post('/voice', (req, res) => {
   <Connect>
     <Stream url="wss://${ngrokUrl}/media-stream">
       <Parameter name="callSid" value="${CallSid}"/>
+      <Parameter name="from" value="${From}"/>
       <Parameter name="to" value="${To}"/>
     </Stream>
   </Connect>
