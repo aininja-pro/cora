@@ -48,6 +48,55 @@ const activeCalls = new Map<string, CallSession>();
 // simple id for logs
 function id(ws: WebSocket) { return (ws as any)._rtid ?? ((ws as any)._rtid = Math.random().toString(36).slice(2,7)); }
 
+// --- transcript persistence helpers ---
+type PersistCtx = {
+  callId: string;
+  backendClient?: { postEvent: (callId: string, evt: any) => Promise<any> };
+  backlog?: Array<{ role: "user" | "assistant"; text: string; ts: string }>;
+  last?: { user?: string; assistant?: string }; // simple de-dupe
+};
+
+function ensureCtx(session: any): PersistCtx {
+  if (!session._persistCtx) {
+    session._persistCtx = { callId: session.dbCallId, backendClient: session.backendClient, backlog: [], last: {} };
+  } else {
+    // keep client fresh (in case it was attached after WS opened)
+    session._persistCtx.backendClient = session.backendClient ?? session._persistCtx.backendClient;
+  }
+  return session._persistCtx;
+}
+
+async function persistTurn(ctx: PersistCtx, role: "user" | "assistant", text: string) {
+  text = (text || "").trim();
+  if (!text) return;
+  // de-dupe exact repeats to avoid double-saves
+  if (ctx.last?.[role] === text) return;
+  ctx.last![role] = text;
+
+  const row = { type: "turn", role, text, ts: new Date().toISOString() };
+
+  if (!ctx.backendClient) {
+    ctx.backlog!.push({ role, text, ts: row.ts });
+    console.warn("TRANSCRIPT BACKLOG +1 (no backendClient yet)");
+    return;
+  }
+  try {
+    const r = await ctx.backendClient.postEvent(ctx.callId, row);
+    if (!r?.ok) console.error("postEvent failed", r?.status, r?.body?.slice?.(0,200));
+    else console.log("DB ✓", role, text.slice(0,80));
+  } catch (err) {
+    console.error("postEvent exception", err);
+  }
+}
+
+async function flushBacklog(ctx: PersistCtx) {
+  if (!ctx.backendClient || !ctx.backlog?.length) return;
+  console.log(`FLUSHING ${ctx.backlog.length} transcript rows`);
+  for (const b of ctx.backlog.splice(0)) {
+    await ctx.backendClient!.postEvent(ctx.callId, { type:"turn", role:b.role, text:b.text, ts:b.ts });
+  }
+}
+
 // Log the first ~50 media frames so we see shape/track
 let dbgFrames = 0;
 function dbgTwilio(msg: any) {
@@ -421,6 +470,32 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
     
     // 🔍 DEBUG: Log ALL events to debug transcription issue
     console.log(`🤖 OpenAI Event: ${message.type}${message.transcript ? ` | transcript: "${message.transcript}"` : ''}${message.item_id ? ` | item_id: ${message.item_id}` : ''}`);
+    
+    const persistCtx = ensureCtx(session);  // ← session.dbCallId + session.backendClient
+
+    // 0) when session.updated lands, flush any backlog that arrived early
+    if (message.type === "session.updated") {
+      await flushBacklog(persistCtx);
+    }
+
+    // 1) USER transcripts (the ones you already see in logs)
+    if (message.type === "conversation.item.input_audio_transcription.completed") {
+      const userText =
+        message.transcript?.text ?? message.transcript ??
+        message.item?.transcript?.text ?? message.item?.transcript ?? "";
+      await persistTurn(persistCtx, "user", userText);
+    }
+
+    // 2) ASSISTANT text (if you also enabled output_text)
+    if (message.type === "response.output_text.done") {
+      const t = message.output_text?.length ? message.output_text.map((x:any)=>x.text?.value||"").join("") : message.text?.value || "";
+      await persistTurn(persistCtx, "assistant", t || "");
+    }
+
+    // 3) ASSISTANT TTS transcript (you *are* seeing these)
+    if (message.type === "response.audio_transcript.done") {
+      await persistTurn(persistCtx, "assistant", message.transcript || "");
+    }
     
     // Create send function for the handler
     const send = (payload: any) => {
