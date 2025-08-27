@@ -1,18 +1,19 @@
 // realtimeInit.ts
 import WebSocket from "ws";
 import { wireRealtimeTracer } from "./tracer";
-import { wireRealtimeTranscriptPersistenceV4 } from "./realtimeTranscriptsV4";
+import { wireTranscriptPersistence } from "./transcriptPersistence";
 import { bindRealtime, sendToOpenAI } from "./realtimeSend"; // your wrapper
+import { CallCtx } from "./callCtx";
 
 export function createRealtimeForCall(opts: {
   callId: string;
-  backendClient: any;
+  callCtx: CallCtx;
   model?: string;
   apiKey: string;
   instructions?: string;
   voice?: string;
 }) {
-  const { callId, backendClient, model = "gpt-4o-mini-realtime-preview", apiKey, instructions, voice } = opts;
+  const { callId, callCtx, model = "gpt-4o-mini-realtime-preview", apiKey, instructions, voice } = opts;
 
   const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
   const ws = new WebSocket(url, {
@@ -27,10 +28,7 @@ export function createRealtimeForCall(opts: {
 
     // wire tracer + V4 persistence BEFORE any session.update or audio
     wireRealtimeTracer(ws);
-    wireRealtimeTranscriptPersistenceV4({
-      ws,
-      callId,
-      backendClient,
+    wireTranscriptPersistence(ws, callCtx, {
       captureTTS: true, // since you saw response.audio_transcript.done
     });
 

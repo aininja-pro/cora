@@ -1,4 +1,6 @@
 // realtimeTranscriptsV4.ts
+import { CallCtx } from "./callCtx";
+
 type BackendClient = {
   postEvent: (callId: string, evt: {
     type: "turn",
@@ -8,16 +10,12 @@ type BackendClient = {
   }) => Promise<{ ok: boolean; status?: number; error?: any } | void>;
 };
 
-// Buffer transcripts until backendClient exists (ChatGPT Step 2)
-const backlog: {callId:string; role:"user"|"assistant"; text:string; ts:string}[] = [];
-
 export function wireRealtimeTranscriptPersistenceV4(opts: {
   ws: import("ws");
-  callId: string;
-  backendClient: BackendClient;
+  callCtx: CallCtx;
   captureTTS?: boolean;
 }) {
-  const { ws, callId, backendClient, captureTTS = true } = opts;
+  const { ws, callCtx, captureTTS = true } = opts;
   console.log("📝 TRANSCRIPT PERSISTENCE WIRED (V4)");
 
   let userBuf = "";
@@ -30,7 +28,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
     // ---------- USER: primary (completed) ----------
     if (e.type === "conversation.item.input_audio_transcription.completed") {
       const text = extractText(e);
-      if (text) { await persist(backendClient, callId, "user", text); userBuf = ""; }
+      if (text) { await persist(callCtx, "user", text); userBuf = ""; }
       return;
     }
     // ---------- USER: streaming (delta/done) ----------
@@ -41,7 +39,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
     if (e.type === "conversation.item.input_audio_transcription.done") {
       const text = (userBuf || extractText(e)).trim();
       userBuf = "";
-      if (text) { await persist(backendClient, callId, "user", text); }
+      if (text) { await persist(callCtx, "user", text); }
       return;
     }
     // ---------- USER: item carries transcript on create/update/completed ----------
@@ -53,7 +51,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
       // input_text directly
       if (e.item.type === "input_text" && e.item.text) {
         const text = String(e.item.text).trim();
-        if (text) { await persist(backendClient, callId, "user", text); }
+        if (text) { await persist(callCtx, "user", text); }
         return;
       }
       // input_audio with transcript nested
@@ -61,7 +59,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
         pick(e.item, ["transcript.text","transcript"]) ||
         pickFromArray(e.item?.content, "input_text", "text") ||
         "";
-      if (text.trim()) { await persist(backendClient, callId, "user", text.trim()); }
+      if (text.trim()) { await persist(callCtx, "user", text.trim()); }
       // don't return; continue to assistant checks in same tick
     }
 
@@ -72,7 +70,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
     }
     if (e.type === "response.output_text.done") {
       const text = asstBuf.trim(); asstBuf = "";
-      if (text) { await persist(backendClient, callId, "assistant", text); }
+      if (text) { await persist(callCtx, "assistant", text); }
       return;
     }
     // ---------- ASSISTANT: outputs array fallback ----------
@@ -82,7 +80,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
         .map((o: any) => o.text?.value || "")
         .join("")
         .trim();
-      if (text) { await persist(backendClient, callId, "assistant", text); }
+      if (text) { await persist(callCtx, "assistant", text); }
       return;
     }
     // ---------- ASSISTANT TTS transcript (you already saw this) ----------
@@ -92,7 +90,7 @@ export function wireRealtimeTranscriptPersistenceV4(opts: {
     }
     if (captureTTS && e.type === "response.audio_transcript.done") {
       const text = (asstTTSBuf || e.transcript || "").toString().trim(); asstTTSBuf = "";
-      if (text) { await persist(backendClient, callId, "assistant", text); }
+      if (text) { await persist(callCtx, "assistant", text); }
       return;
     }
 
@@ -127,23 +125,22 @@ function pickFromArray(arr: any[], type: string, key: string): string | undefine
 }
 
 async function persist(
-  backend: BackendClient,
-  callId: string,
+  callCtx: CallCtx,
   role: "user" | "assistant",
   text: string
 ) {
   console.log(role === "user" ? "👤 USER" : "🤖 CORA", text);
   
-  const row = { callId, role, text, ts: new Date().toISOString() };
+  const row = { role, text, ts: new Date().toISOString() };
 
-  if (!backend) {
-    backlog.push(row); // buffer
+  if (!callCtx.backendClient) {
+    callCtx.backlog.push(row); // buffer
     console.warn("TRANSCRIPT BACKLOG +1 (no backendClient yet)");
     return;
   }
   
   try {
-    const res: any = await backend.postEvent(callId, {
+    const res: any = await callCtx.backendClient.postEvent(callCtx.callId, {
       type: "turn", role, text, ts: row.ts
     });
     if (res && !res.ok) console.error("postEvent failed", res.status, res.body?.slice?.(0,200));
@@ -153,11 +150,11 @@ async function persist(
 }
 
 // Export flush function for use after backend client is ready
-export function flushTranscriptBacklog(session: any) {
-  if (backlog.length && session.backendClient) {
-    console.log(`FLUSHING ${backlog.length} transcript rows`);
-    for (const b of backlog.splice(0)) {
-      session.backendClient.postEvent(b.callId, {
+export function flushTranscriptBacklog(callCtx: CallCtx) {
+  if (callCtx.backlog.length && callCtx.backendClient) {
+    console.log(`FLUSHING ${callCtx.backlog.length} transcript rows`);
+    for (const b of callCtx.backlog.splice(0)) {
+      callCtx.backendClient.postEvent(callCtx.callId, {
         type:"turn", role:b.role, text:b.text, ts:b.ts
       }).catch((err: any) => console.error("Backlog flush failed", err));
     }

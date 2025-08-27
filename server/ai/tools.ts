@@ -202,21 +202,12 @@ export async function runTool(
         });
 
         if (!res.ok) {
-          console.error("TOOL FAIL", { status: res.status, body: res.body.slice(0,500) });
-          // propagate a helpful message to the model
-          return { 
-            ok: false, 
-            error: { 
-              code: String(res.status), 
-              message: "Backend unavailable", 
-              details: res.body.slice(0,200) 
-            } 
-          };
+          console.error("TOOL FAIL", { status: res.status, body: res.body?.slice?.(0,500) });
+          return { ok:false, error:{ code: res.status, message: "Backend unavailable", detail: res.body?.slice?.(0,200) }};
         }
         
-        const data = JSON.parse(res.body); // if your backend returns JSON
-        console.log(`✅ [${ctx.callId}] Tool ${name} completed via backend`);
-        return { ok: true, data };
+        const data = JSON.parse(res.body);
+        return { ok:true, data };
         
       } catch (error) {
         console.error(`❌ [${ctx.callId}] Tool execution exception:`, error);

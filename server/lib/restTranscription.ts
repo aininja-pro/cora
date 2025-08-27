@@ -16,10 +16,12 @@ export async function transcribeAndPersistUser(
     formData.append('language', 'en');
     
     // Call OpenAI REST transcription
+    console.log("KEY_FPRINT", apiKey?.slice(0,8), "proj:", process.env.OPENAI_PROJECT || "none");
     const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${apiKey}`
+        'Authorization': `Bearer ${apiKey}`,
+        'OpenAI-Project': process.env.OPENAI_PROJECT
       },
       body: formData
     });

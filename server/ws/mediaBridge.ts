@@ -16,7 +16,10 @@ import { makeBackendClient } from '../lib/backendClient';
 import { WhisperFeeder } from '../lib/whisperFeeder';
 import { bindRealtime, sendToOpenAI, FEEDER_TOKEN } from '../lib/realtimeSend';
 import { createRealtimeForCall } from '../lib/realtimeInit';
-import { flushTranscriptBacklog } from '../lib/realtimeTranscriptsV4';
+import { flushBacklog, wireTranscriptPersistence } from '../lib/transcriptPersistence';
+import { CallCtx, makeCallCtx } from '../lib/callCtx';
+import { wireRealtimeTracer } from '../lib/tracer';
+import WebSocket from 'ws';
 
 interface CallSession {
   callSid: string;
@@ -37,9 +40,13 @@ interface CallSession {
   outgoingQueue: Buffer[]; // Queue for 160-byte μ-law frames
   outputTimer?: NodeJS.Timeout; // 20ms timer for paced audio output
   isAssistantSpeaking: boolean; // Half-duplex flag to prevent feedback
+  callCtx?: CallCtx; // Shared context for transcripts
 }
 
 const activeCalls = new Map<string, CallSession>();
+
+// simple id for logs
+function id(ws: WebSocket) { return (ws as any)._rtid ?? ((ws as any)._rtid = Math.random().toString(36).slice(2,7)); }
 
 // Log the first ~50 media frames so we see shape/track
 let dbgFrames = 0;
@@ -77,7 +84,7 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
   console.log(`🔗 Media stream connected - waiting for start event`);
   
   // Handle Twilio WebSocket events
-  ws.on('message', (data) => {
+  ws.on('message', async (data) => {
     try {
       const message = JSON.parse(Buffer.from(data as any).toString());
       
@@ -100,7 +107,7 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
         toNumber = to;
         const tenant = getTenantByToNumber(toNumber);
         
-        // Now initialize the session
+        // Initialize the session first (without callCtx yet)
         const session: CallSession = {
           callSid,
           streamSid,
@@ -122,11 +129,8 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
         activeCalls.set(callSid, session);
         startCallMetrics(callSid);
         
-        // Initialize OpenAI Realtime connection
-        initializeRealtimeConnection(session);
-        
-        // Initialize call with Python backend
-        initializeCallWithBackend(session, message);
+        // Initialize call with Python backend to get proper call_id
+        await initializeCallWithBackend(session, message);
       } else if (callSid) {
         // Handle other events only if we have a session
         const existingSession = activeCalls.get(callSid);
@@ -162,40 +166,86 @@ Start with this exact greeting, then wait for the caller:
 "${greeting}"
 `;
     
-    // CRITICAL: Use ChatGPT's bulletproof socket creation
-    const realtimeWs = createRealtimeForCall({
-      callId: session.dbCallId || session.callSid,
-      backendClient: session.backendClient,
-      apiKey: process.env.OPENAI_API_KEY!,
-      instructions: instructions,
-      voice: session.tenant.voice || 'verse'
+    const ctx = session.callCtx!;
+    const model = "gpt-4o-mini-realtime-preview";
+    const apiKey = process.env.OPENAI_API_KEY!;
+    const voice = session.tenant.voice || 'verse';
+    
+    // Create WebSocket directly
+    console.log("KEY_FPRINT", process.env.OPENAI_API_KEY?.slice(0,8), "proj:", process.env.OPENAI_PROJECT || "none");
+    const url = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`;
+    const realtimeWs = new WebSocket(url, {
+      headers: { 
+        Authorization: `Bearer ${apiKey}`, 
+        "OpenAI-Beta": "realtime=v1",
+        "OpenAI-Project": process.env.OPENAI_PROJECT
+      },
     });
     
     session.realtimeWs = realtimeWs;
     
-    // Session setup now handled in createRealtimeForCall
-    
-    realtimeWs.on('open', () => {
-      console.log(`🤖 Realtime connected for call ${session.callSid}`);
-      session.isConnected = false; // Wait for session.updated confirmation
+    realtimeWs.on("open", () => {
+      console.log(`RT:OPEN call=${ctx.callId} ws=${id(realtimeWs)}`);
+      // bind send wrapper to THIS socket
+      bindRealtime(realtimeWs);
+      console.log(`SEND:BOUND ws= ${id(realtimeWs)}`);
       
-      // Send explicit greeting to test output
-      console.log('🎤 Triggering explicit greeting...');
-      realtimeWs.send(JSON.stringify({
-        type: 'response.create',
-        response: {
+      // right after ws 'open'
+      let _msgCount = 0;
+      let _typesSeen = 0;
+      realtimeWs.on("message", (raw: Buffer) => {
+        _msgCount++;
+        if (_msgCount <= 10) console.log("WSMSG", _msgCount, raw?.length ?? 0);
+        
+        if (_typesSeen >= 30) return;
+        try {
+          const e = JSON.parse(raw.toString());
+          console.log("EVT", ++_typesSeen, e.type);
+        } catch { /* ignore */ }
+      });
+      
+      // wire tracer + persistence BEFORE any session.update or audio
+      wireRealtimeTracer(realtimeWs);
+      wireTranscriptPersistence(realtimeWs, ctx, { captureTTS: true });
+      
+      // Force modalities and transcription (send once, before audio)
+      sendToOpenAI({
+        type: "session.update",
+        session: {
+          // you're feeding Twilio μ-law 8k
+          input_audio_format: "g711_ulaw",
+          output_audio_format: "g711_ulaw",
+
+          // assistant text + audio events
           modalities: ["audio", "text"],
-          instructions: 'Introduce yourself as CORA and ask how you can help.'
+
+          // user STT
+          input_audio_transcription: { model: "whisper-1", language: "en" },
+
+          // VAD tuned for phone pauses
+          turn_detection: { type: "server_vad", silence_duration_ms: 220 },
+          
+          voice: voice,
+          instructions: instructions,
+          tools: require('../ai/tools').TOOLS,
+          tool_choice: 'auto'
         }
-      }));
+      });
     });
     
-    // IMPORTANT: create WhisperFeeder only AFTER session.updated (ChatGPT Step 3)
-    realtimeWs.on("message", (raw) => {
+    // After session.updated, start feeder + flush edge case transcripts
+    realtimeWs.on("message", async (raw) => {
       let e: any; 
       try { e = JSON.parse(raw.toString()); } catch { return; }
       
       if (e.type === "session.updated") {
+        // Verify session accepted our config
+        console.log("SESSION_VERIFY", {
+          modalities: e.session?.modalities,
+          input_transcription: e.session?.input_audio_transcription,
+          turn_detection: e.session?.turn_detection?.type
+        });
+        
         session.whisperFeeder = new WhisperFeeder(
           (m) => sendToOpenAI(m, FEEDER_TOKEN),
           session.dbCallId,
@@ -205,6 +255,19 @@ Start with this exact greeting, then wait for the caller:
         session.whisperFeeder.markReady();
         console.log("🎯 WHISPER FEEDER READY");
         session.isConnected = true;
+        
+        // 🔑 FLUSH NOW (edge case: some transcripts may have arrived before client)
+        await flushBacklog(ctx);
+        
+        // Send normal greeting
+        console.log('🎤 Triggering greeting...');
+        sendToOpenAI({
+          type: "response.create",
+          response: {
+            instructions: 'Introduce yourself as CORA and ask how you can help.',
+            modalities: ["audio", "text"]
+          }
+        });
       }
       
       // Also handle other events for tools etc
@@ -213,12 +276,10 @@ Start with this exact greeting, then wait for the caller:
     
     realtimeWs.on('close', () => {
       console.log(`🔌 Realtime disconnected for call ${session.callSid}`);
-      // TODO: Implement reconnection logic from Master Plan
     });
     
     realtimeWs.on('error', (error) => {
       console.error(`❌ Realtime error for call ${session.callSid}:`, error);
-      // TODO: Implement fallback to human transfer
     });
     
   } catch (error) {
@@ -683,11 +744,16 @@ async function initializeCallWithBackend(session: CallSession, startMessage: any
     const callData = await response.json();
     session.dbCallId = callData.call_id;
     
-    // CRITICAL: Create proper backend client with JWT (ChatGPT's fix)
-    session.backendClient = makeBackendClient(
+    // Create shared call context with proper call_id from backend
+    const ctx = makeCallCtx(callData.call_id);
+    session.callCtx = ctx;
+    
+    // CRITICAL: Create backend client immediately after JWT 
+    ctx.backendClient = makeBackendClient(
       process.env.BACKEND_BASE_URL!,
       callData.jwt_token
     );
+    session.backendClient = ctx.backendClient;
     
     console.log("BACKEND READY", {
       hasClient: !!session.backendClient,
@@ -701,8 +767,8 @@ async function initializeCallWithBackend(session: CallSession, startMessage: any
     
     console.log(`📝 [${callData.call_id}] Call initialized via backend - JWT acquired, tenant: ${callData.tenant.name}`);
     
-    // Flush any buffered transcripts (ChatGPT Step 2)
-    flushTranscriptBacklog(session);
+    // Initialize OpenAI Realtime connection now that we have the backend client
+    await initializeRealtimeConnection(session);
     
     // Send call_started status event
     try {
