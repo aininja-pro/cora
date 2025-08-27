@@ -40,7 +40,7 @@ function validateTwilioSignature(signature: string, url: string, params: any): b
  */
 router.post('/voice', (req, res) => {
   try {
-    // Temporarily disable signature validation for testing
+    console.log('📞 TwiML v2025-08-27 (ChatGPT transcript solution)');
     console.log('⚠️ Signature validation disabled for debugging');
     
     // Extract call information

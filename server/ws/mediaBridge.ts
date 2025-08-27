@@ -12,9 +12,11 @@ import { sendAudioToRealtime, commitAudioBuffer } from '../ai/realtime';
 import { handleRealtimeEvent } from '../ai/realtimeHandlers';
 import { ToolContext } from '../ai/tools';
 import { startCallMetrics, recordFirstAudio, recordToolExecution, finishCallMetrics } from '../lib/metrics';
-import { BackendClient } from '../lib/backendClient';
+import { makeBackendClient } from '../lib/backendClient';
 import { WhisperFeeder } from '../lib/whisperFeeder';
-import { bindRealtime, sendToOpenAI } from '../lib/realtimeSend';
+import { bindRealtime, sendToOpenAI, FEEDER_TOKEN } from '../lib/realtimeSend';
+import { createRealtimeForCall } from '../lib/realtimeInit';
+import { flushTranscriptBacklog } from '../lib/realtimeTranscriptsV4';
 
 interface CallSession {
   callSid: string;
@@ -29,7 +31,7 @@ interface CallSession {
   hasBargein: boolean;
   dbCallId?: string;
   callerNumber?: string;
-  backendClient?: BackendClient;
+  backendClient?: any;
   whisperFeeder?: WhisperFeeder;
   bytesSinceCommit: number; // Track bytes for proper commit gating
   outgoingQueue: Buffer[]; // Queue for 160-byte μ-law frames
@@ -160,79 +162,52 @@ Start with this exact greeting, then wait for the caller:
 "${greeting}"
 `;
     
-    // Create WebSocket connection to OpenAI Realtime API
-    const realtimeWs = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview', {
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'OpenAI-Beta': 'realtime=v1'
-      }
+    // CRITICAL: Use ChatGPT's bulletproof socket creation
+    const realtimeWs = createRealtimeForCall({
+      callId: session.dbCallId || session.callSid,
+      backendClient: session.backendClient,
+      apiKey: process.env.OPENAI_API_KEY!,
+      instructions: instructions,
+      voice: session.tenant.voice || 'verse'
     });
     
     session.realtimeWs = realtimeWs;
     
+    // Session setup now handled in createRealtimeForCall
+    
     realtimeWs.on('open', () => {
       console.log(`🤖 Realtime connected for call ${session.callSid}`);
-      
-      // CRITICAL: Bind circuit breaker before any audio (ChatGPT Step 1)
-      bindRealtime(realtimeWs);
-      
-      // Fix #1: Lock session config to 16kHz input/output (CRITICAL: prevents 24k→8k artifacts)
-      const sessionConfig = {
-        type: 'session.update',
-        session: {
-          modalities: ['audio', 'text'],
-          voice: session.tenant.voice || 'verse',
-          instructions: instructions,
-          turn_detection: {
-            type: 'server_vad',
-            silence_duration_ms: 300,
-            prefix_padding_ms: 300
-          },
-          input_audio_transcription: {
-            model: "whisper-1",
-            language: "en"
-          },
-          input_audio_format: "g711_ulaw",
-          output_audio_format: "g711_ulaw",
-          tools: require('../ai/tools').TOOLS,
-          tool_choice: 'auto'
-        }
-      };
-      
-      // CRITICAL: Use circuit breaker to send session update (ChatGPT Step 2)
-      console.log('📡 SESSION PINNING:', JSON.stringify(sessionConfig, null, 2));
-      sendToOpenAI(sessionConfig);
-      
       session.isConnected = false; // Wait for session.updated confirmation
       
-      // Send explicit greeting to test output (ChatGPT's diagnostic)
+      // Send explicit greeting to test output
       console.log('🎤 Triggering explicit greeting...');
       realtimeWs.send(JSON.stringify({
         type: 'response.create',
         response: {
+          modalities: ["audio", "text"],
           instructions: 'Introduce yourself as CORA and ask how you can help.'
         }
       }));
     });
     
-    realtimeWs.on('message', (raw) => {
-      try {
-        const evt = JSON.parse(raw.toString());
-        if (evt.type === "session.updated") {
-          console.log("✅ session.updated:", evt.session?.input_audio_transcription);
-          
-          // Only initialize feeder after session confirmed
-          if (evt.session?.input_audio_transcription?.model === 'whisper-1') {
-            session.whisperFeeder = new WhisperFeeder(sendToOpenAI); // Use circuit breaker!
-            session.whisperFeeder.markReady(); // only start after this line appears once
-            console.log(`🎯 WHISPER FEEDER READY: Will process inbound audio with 16kHz/100ms timing`);
-            session.isConnected = true;
-          }
-        }
-        if (evt.type === "error") console.error("❌ Realtime error:", evt);
-      } catch {}
+    // IMPORTANT: create WhisperFeeder only AFTER session.updated (ChatGPT Step 3)
+    realtimeWs.on("message", (raw) => {
+      let e: any; 
+      try { e = JSON.parse(raw.toString()); } catch { return; }
       
-      // Also handle other events
+      if (e.type === "session.updated") {
+        session.whisperFeeder = new WhisperFeeder(
+          (m) => sendToOpenAI(m, FEEDER_TOKEN),
+          session.dbCallId,
+          session.backendClient,
+          process.env.OPENAI_API_KEY
+        );
+        session.whisperFeeder.markReady();
+        console.log("🎯 WHISPER FEEDER READY");
+        session.isConnected = true;
+      }
+      
+      // Also handle other events for tools etc
       handleRealtimeMessage(session, Buffer.from(raw as any));
     });
     
@@ -685,9 +660,7 @@ async function initializeCallWithBackend(session: CallSession, startMessage: any
     console.log(`📞 [${session.callSid}] Extracted caller: ${callerNumber} from Twilio start event`);
     session.callerNumber = callerNumber;
     
-    // Create backend client and initialize call
-    const backendClient = new BackendClient();
-    
+    // Create call via backend API first to get JWT
     const createCallRequest = {
       tenant_id: session.tenant.agentDisplayName, // Use agent name as tenant ID for now
       caller_number: callerNumber,
@@ -697,19 +670,51 @@ async function initializeCallWithBackend(session: CallSession, startMessage: any
     
     console.log(`🔗 Creating call via backend API: ${JSON.stringify(createCallRequest)}`);
     
-    const response = await backendClient.createCall(createCallRequest);
+    const response = await fetch(`${process.env.BACKEND_BASE_URL}/api/calls`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(createCallRequest)
+    });
     
-    session.dbCallId = response.call_id;
-    session.backendClient = backendClient;
+    if (!response.ok) {
+      throw new Error(`Failed to create call: ${response.status}`);
+    }
     
-    console.log(`📝 [${response.call_id}] Call initialized via backend - JWT acquired, tenant: ${response.tenant.name}`);
+    const callData = await response.json();
+    session.dbCallId = callData.call_id;
+    
+    // CRITICAL: Create proper backend client with JWT (ChatGPT's fix)
+    session.backendClient = makeBackendClient(
+      process.env.BACKEND_BASE_URL!,
+      callData.jwt_token
+    );
+    
+    console.log("BACKEND READY", {
+      hasClient: !!session.backendClient,
+      baseUrl: session.backendClient?.baseUrl,
+    });
+    
+    // Hard assert so we don't proceed half-initialized
+    if (!session.backendClient) {
+      throw new Error("backendClient missing; aborting call setup");
+    }
+    
+    console.log(`📝 [${callData.call_id}] Call initialized via backend - JWT acquired, tenant: ${callData.tenant.name}`);
+    
+    // Flush any buffered transcripts (ChatGPT Step 2)
+    flushTranscriptBacklog(session);
     
     // Send call_started status event
-    await backendClient.addStatus("call_started", {
-      caller_number: callerNumber,
-      agent_number: session.toNumber,
-      twilio_sid: session.callSid
-    });
+    try {
+      await session.backendClient.postEvent(session.dbCallId, {
+        type: "turn",
+        role: "assistant", 
+        text: `Call started with ${callerNumber}`,
+        ts: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error(`❌ Failed to post call start event:`, error);
+    }
     
     console.log(`🎤 [${session.dbCallId}] Ready for WhisperFeeder initialization after session.updated`);
     

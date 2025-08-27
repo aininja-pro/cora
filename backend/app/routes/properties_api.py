@@ -8,10 +8,62 @@ from datetime import datetime
 import logging
 from pydantic import BaseModel
 from ..services.supabase_service import SupabaseService
+from ..services.property_search_service import property_search_service, PropertySearchFilter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/properties", tags=["properties"])
+
+@router.get("/search")
+async def search_properties(
+    city: Optional[str] = None,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
+    beds_min: Optional[int] = None,
+    baths_min: Optional[float] = None,
+    status: Optional[str] = "active",
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "price_desc"
+) -> Dict[str, Any]:
+    """
+    Search properties using shared service (used by UI)
+    """
+    try:
+        search_filter = PropertySearchFilter(
+            city=city,
+            min_price=min_price,
+            max_price=max_price,
+            beds_min=beds_min,
+            baths_min=baths_min,
+            status=status,
+            page=page,
+            page_size=page_size,
+            sort=sort
+        )
+        
+        result = await property_search_service.search(search_filter, f"ui_search_{page}")
+        
+        return {
+            "success": True,
+            "total": result.total,
+            "properties": [prop.dict() for prop in result.items],
+            "page": result.page,
+            "page_size": result.page_size,
+            "has_more": result.has_more
+        }
+        
+    except Exception as e:
+        logger.error(f"Property search failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "total": 0,
+            "properties": [],
+            "page": page,
+            "page_size": page_size,
+            "has_more": False
+        }
 
 class PropertyCreate(BaseModel):
     address: str
@@ -22,6 +74,7 @@ class PropertyCreate(BaseModel):
     type: str  # house, condo, townhouse, land, commercial, other
     description: str
     status: str = "active"  # active, pending, sold, inactive
+    photos: Optional[List[str]] = []  # Array of image URLs
 
 class PropertyUpdate(BaseModel):
     address: Optional[str] = None
@@ -32,6 +85,7 @@ class PropertyUpdate(BaseModel):
     type: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    photos: Optional[List[str]] = None  # Array of image URLs
 
 @router.get("/")
 async def get_all_properties(
@@ -123,6 +177,7 @@ async def create_property(property_data: PropertyCreate) -> Dict[str, Any]:
             "type": property_data.type,
             "description": property_data.description,
             "status": property_data.status,
+            "photos": property_data.photos,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat()
         }

@@ -1,22 +1,28 @@
 // whisperFeeder.ts
 // Twilio inbound μ-law (8 kHz, 20 ms = 160 bytes) -> PCM16 16 kHz -> 100 ms commits (3200 bytes)
 import { sendToOpenAI, FEEDER_TOKEN } from "./realtimeSend";
+import { transcribeAndPersistUser } from "./restTranscription";
 
 type SendFn = (msg: any) => void;
 
-// === Tunables (good defaults for PSTN) ===
-const MIN_UTTER_MS = 800;    // don't commit tiny blobs
-const END_SIL_MS   = 300;    // how much trailing silence ends an utterance
-const HARD_MAX_MS  = 4500;   // force a commit if someone monologues
+// === Tunables (optimized for phone speech - ChatGPT Step 4) ===
+const MIN_UTTER_MS = 600;   // was 800
+const END_SIL_MS   = 220;   // was 300 (phone speech often has ~200–250ms gaps)
+const HARD_MAX_MS  = 3000;  // was 4500
 
 export class WhisperFeeder {
-  private byteBuf = Buffer.alloc(0); // PCM16 @ 16 kHz
+  private byteBuf = Buffer.alloc(0); // μ-law bytes @ 8 kHz
   private ready = false;
   private lastSpeechAt = 0;          // ms timestamp of last voiced frame
   private startedAt = 0;             // ms timestamp when current utterance began
   private clock = () => Date.now();
 
-  constructor(private send: (m:any, t?:symbol) => void) {}
+  constructor(
+    private send: (m:any, t?:symbol) => void,
+    private callId?: string,
+    private backendClient?: any,
+    private apiKey?: string
+  ) {}
 
   markReady() { this.ready = true; }  // call after session.updated
 
@@ -59,6 +65,12 @@ export class WhisperFeeder {
       // observability
       console.log(`→ append utterance lenB=${this.byteBuf.length} (~${bufMs} ms μ-law)`);
       console.log("→ commit (utterance)");
+
+      // REST fallback transcription (ChatGPT Step 4)
+      if (this.callId && this.backendClient && this.apiKey) {
+        transcribeAndPersistUser(this.byteBuf, this.callId, this.backendClient, this.apiKey)
+          .catch(err => console.error("REST transcription failed", err));
+      }
 
       // reset
       this.byteBuf = Buffer.alloc(0);

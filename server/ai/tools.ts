@@ -193,29 +193,33 @@ export async function runTool(
       console.log(`🔧 [${ctx.callId}] Executing ${name} via backend API`);
       
       try {
-        // Log tool call event
-        await ctx.backendClient.addToolCall(name, args);
+        // Execute tool with proper error handling (ChatGPT Step 3)
+        const res = await ctx.backendClient.execTool({
+          call_id: ctx.callId,
+          tenant_id: ctx.tenantId,
+          tool: name,
+          args: args
+        });
+
+        if (!res.ok) {
+          console.error("TOOL FAIL", { status: res.status, body: res.body.slice(0,500) });
+          // propagate a helpful message to the model
+          return { 
+            ok: false, 
+            error: { 
+              code: String(res.status), 
+              message: "Backend unavailable", 
+              details: res.body.slice(0,200) 
+            } 
+          };
+        }
         
-        // Execute via backend
-        const result = await ctx.backendClient.executeTool(name, args);
-        
-        // Log tool result event
-        await ctx.backendClient.addToolResult(name, result);
-        
+        const data = JSON.parse(res.body); // if your backend returns JSON
         console.log(`✅ [${ctx.callId}] Tool ${name} completed via backend`);
-        return result;
+        return { ok: true, data };
         
       } catch (error) {
-        console.error(`❌ [${ctx.callId}] Backend tool execution failed:`, error);
-        
-        // Log error event
-        try {
-          await ctx.backendClient.addStatus("error", {
-            phase: "tool_execution",
-            tool: name,
-            error: String(error)
-          });
-        } catch {}
+        console.error(`❌ [${ctx.callId}] Tool execution exception:`, error);
         
         return {
           ok: false,

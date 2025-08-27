@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORA - Voice Assistant Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1B2A41 0%, #FF6B6B 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        
+        .logo {
+            font-size: 3rem;
+            font-weight: bold;
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #FFF8F3, #FF6B6B);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+        }
+        
+        .demo-section {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 2rem;
+            margin: 2rem 0;
+            backdrop-filter: blur(10px);
+        }
+        
+        .connect-button {
+            background: #FF6B6B;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 50px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 10px;
+        }
+        
+        .connect-button:hover:not(:disabled) {
+            background: #ff5252;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(255, 107, 107, 0.3);
+        }
+        
+        .connect-button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            margin: 1rem 0;
+            padding: 10px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        
+        .status.connecting {
+            background: rgba(255, 193, 7, 0.2);
+            border: 1px solid #ffc107;
+        }
+        
+        .status.connected {
+            background: rgba(40, 167, 69, 0.2);
+            border: 1px solid #28a745;
+        }
+        
+        .status.disconnected {
+            background: rgba(220, 53, 69, 0.2);
+            border: 1px solid #dc3545;
+        }
+        
+        .transcript {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 15px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+            min-height: 200px;
+            text-align: left;
+            font-family: monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            overflow-y: auto;
+            max-height: 400px;
+        }
+        
+        .transcript-entry {
+            margin: 0.8rem 0;
+            padding: 10px 15px;
+            border-radius: 10px;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .transcript-entry.user {
+            background: rgba(255, 107, 107, 0.2);
+            border-left: 4px solid #FF6B6B;
+        }
+        
+        .transcript-entry.assistant {
+            background: rgba(27, 42, 65, 0.3);
+            border-left: 4px solid #4A90E2;
+        }
+        
+        .transcript-entry.system {
+            background: rgba(255, 193, 7, 0.15);
+            border-left: 4px solid #ffc107;
+            font-style: italic;
+        }
+        
+        .transcript-entry.system.success {
+            background: rgba(40, 167, 69, 0.15);
+            border-left: 4px solid #28a745;
+        }
+        
+        .transcript-entry.system.error {
+            background: rgba(220, 53, 69, 0.15);
+            border-left: 4px solid #dc3545;
+        }
+        
+        .transcript-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            opacity: 0.9;
+        }
+        
+        .transcript-text {
+            color: rgba(255, 255, 255, 0.95);
+            word-wrap: break-word;
+        }
+        
+        .agent-info {
+            background: rgba(255, 248, 243, 0.1);
+            border-radius: 10px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">CORA</div>
+        <div class="subtitle">AI Voice Assistant for Real Estate</div>
+        
+        <div class="demo-section">
+            <h2>WebRTC Demo</h2>
+            <p>Click Connect to start a voice conversation with CORA using your microphone.</p>
+            
+            <div class="agent-info" id="agentInfo" style="display: none;">
+                <strong>Agent:</strong> <span id="agentName">Loading...</span><br>
+                <strong>AI Assistant:</strong> <span id="brandName">CORA</span>
+            </div>
+            
+            <button class="connect-button" id="connectBtn" onclick="toggleConnection()">
+                Connect
+            </button>
+            
+            <div class="status disconnected" id="status">
+                Disconnected - Click Connect to start
+            </div>
+            
+            <div class="transcript" id="transcript">
+                <div style="text-align: center; opacity: 0.6; margin-top: 80px;">
+                    Transcript will appear here when you start talking...
+                </div>
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>Try These Commands</h3>
+            <div style="text-align: left; max-width: 600px; margin: 0 auto;">
+                <p>🏠 <strong>Property Search:</strong> "Show me 3-bedroom homes under $500k"</p>
+                <p>📅 <strong>Book Showing:</strong> "Schedule a showing for 123 Main Street tomorrow at 2pm"</p>
+                <p>📞 <strong>Request Callback:</strong> "Have someone call me back about financing"</p>
+                <p>👤 <strong>Qualify Lead:</strong> "I'm looking to buy a home, budget is $400k"</p>
+                <p>🔄 <strong>Transfer:</strong> "I need to speak to a human agent"</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/client/realtime.js"></script>
+</body>
+</html>

@@ -3,6 +3,33 @@
  * Handles call lifecycle and tool execution via HTTP
  */
 
+export type BackendClient = {
+  baseUrl: string;
+  jwt: string;
+  postEvent: (callId: string, evt: {type:"turn";role:"user"|"assistant";text:string;ts:string}) =>
+    Promise<{ ok: boolean; status: number; body: string }>;
+  execTool: (payload: any) =>
+    Promise<{ ok: boolean; status: number; body: string }>;
+};
+
+export function makeBackendClient(baseUrl: string, jwt: string): BackendClient {
+  async function post(path: string, body: any) {
+    const r = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "Authorization":`Bearer ${jwt}` },
+      body: JSON.stringify(body),
+    });
+    const t = await r.text().catch(()=> "");
+    if (!r.ok) console.error("BACKEND HTTP", r.status, t.slice(0,300));
+    return { ok: r.ok, status: r.status, body: t };
+  }
+  return {
+    baseUrl, jwt,
+    postEvent: (callId, evt) => post(`/api/calls/${callId}/events`, evt),
+    execTool: (payload) => post(`/api/tools/execute`, payload),
+  };
+}
+
 export interface CreateCallRequest {
   tenant_id: string;
   caller_number: string;
@@ -92,6 +119,44 @@ export class BackendClient {
     console.log(`🔐 Backend auth established: call=${this.callId}, tenant=${this.tenantId}`);
     
     return result;
+  }
+
+  /**
+   * Post event (ChatGPT transcript handler format with HTTP verification)
+   */
+  async postEvent(callId: string, evt: {
+    type: "turn",
+    role: "user" | "assistant", 
+    text: string,
+    ts: string
+  }): Promise<{ ok: boolean, status?: number, error?: any }> {
+    if (!this.jwtToken) {
+      console.error("postEvent: No JWT token available");
+      return { ok: false, error: "No JWT token" };
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/api/calls/${callId}/events`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.jwtToken}`
+        },
+        body: JSON.stringify(evt)
+      });
+      
+      const ok = response.ok;
+      const text = await response.text().catch(() => "");
+      
+      if (!ok) {
+        console.error("postEvent HTTP", response.status, text);
+      }
+      
+      return { ok, status: response.status, error: ok ? undefined : text };
+    } catch (error) {
+      console.error("postEvent exception", error);
+      return { ok: false, error: String(error) };
+    }
   }
 
   /**

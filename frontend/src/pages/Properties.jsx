@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { MapPin, Bed, Bath, Square, DollarSign, Phone, Plus, X } from 'lucide-react'
+import { MapPin, Bed, Bath, Square, DollarSign, Phone, Plus, X, Edit, Trash2, Image } from 'lucide-react'
 
 function Properties() {
   const [properties, setProperties] = useState([])
@@ -7,6 +7,9 @@ function Properties() {
   const [showAddForm, setShowAddForm] = useState(false)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState(null)
+  const [editingProperty, setEditingProperty] = useState(null)
+  const [showEditForm, setShowEditForm] = useState(false)
+  const [updating, setUpdating] = useState(false)
   const [formData, setFormData] = useState({
     address: '',
     price: '',
@@ -15,7 +18,8 @@ function Properties() {
     sqft: '',
     type: 'house',
     description: '',
-    status: 'active'
+    status: 'active',
+    photos: []
   })
 
   useEffect(() => {
@@ -26,7 +30,7 @@ function Properties() {
     try {
       setLoading(true)
       setError(null)
-      const response = await fetch('https://cora-backend-epv0.onrender.com/api/properties/')
+      const response = await fetch('http://localhost:8000/api/properties/')
       const data = await response.json()
       
       if (data.success) {
@@ -56,7 +60,7 @@ function Properties() {
         sqft: parseInt(formData.sqft)
       }
 
-      const response = await fetch('https://cora-backend-epv0.onrender.com/api/properties/', {
+      const response = await fetch('http://localhost:8000/api/properties/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -70,16 +74,7 @@ function Properties() {
         // Add the new property to the list
         setProperties(prev => [data.property, ...prev])
         // Reset form
-        setFormData({
-          address: '',
-          price: '',
-          beds: '',
-          baths: '',
-          sqft: '',
-          type: 'house',
-          description: '',
-          status: 'active'
-        })
+        resetForm()
         setShowAddForm(false)
       } else {
         setError(data.detail || 'Failed to create property')
@@ -92,12 +87,128 @@ function Properties() {
     }
   }
 
+  const handleUpdateProperty = async (e) => {
+    e.preventDefault()
+    setUpdating(true)
+    setError(null)
+
+    try {
+      const propertyData = {
+        ...formData,
+        price: parseFloat(formData.price),
+        beds: parseInt(formData.beds),
+        baths: parseFloat(formData.baths),
+        sqft: parseInt(formData.sqft)
+      }
+
+      const response = await fetch(`http://localhost:8000/api/properties/${editingProperty.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(propertyData)
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        // Update the property in the list
+        setProperties(prev => prev.map(p => p.id === editingProperty.id ? data.property : p))
+        setShowEditForm(false)
+        setEditingProperty(null)
+        resetForm()
+      } else {
+        setError(data.detail || 'Failed to update property')
+      }
+    } catch (err) {
+      console.error('Error updating property:', err)
+      setError('Failed to update property')
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const handleDeleteProperty = async (propertyId) => {
+    if (!confirm('Are you sure you want to delete this property?')) return
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`, {
+        method: 'DELETE'
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        setProperties(prev => prev.filter(p => p.id !== propertyId))
+      } else {
+        setError('Failed to delete property')
+      }
+    } catch (err) {
+      console.error('Error deleting property:', err)
+      setError('Failed to delete property')
+    }
+  }
+
+  const handleEditProperty = (property) => {
+    setEditingProperty(property)
+    setFormData({
+      address: property.address || '',
+      price: property.price?.toString() || '',
+      beds: property.beds?.toString() || '',
+      baths: property.baths?.toString() || '',
+      sqft: property.sqft?.toString() || '',
+      type: property.type || 'house',
+      description: property.description || '',
+      status: property.status || 'active',
+      photos: property.photos || []
+    })
+    setShowEditForm(true)
+  }
+
+  const resetForm = () => {
+    setFormData({
+      address: '',
+      price: '',
+      beds: '',
+      baths: '',
+      sqft: '',
+      type: 'house',
+      description: '',
+      status: 'active',
+      photos: []
+    })
+  }
+
   const handleInputChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({
       ...prev,
       [name]: value
     }))
+  }
+
+  const handleAddPhoto = () => {
+    const url = prompt('Enter image URL:')
+    if (url && url.trim()) {
+      setFormData(prev => ({
+        ...prev,
+        photos: [...prev.photos, url.trim()]
+      }))
+    }
+  }
+
+  const handleRemovePhoto = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      photos: prev.photos.filter((_, i) => i !== index)
+    }))
+  }
+
+  const getPropertyImage = (property) => {
+    if (property.photos && property.photos.length > 0) {
+      return property.photos[0]
+    }
+    return getDefaultImage(property.type)
   }
 
   const getDefaultImage = (type) => {
@@ -185,10 +296,24 @@ function Properties() {
             {/* Property Image */}
             <div className="relative h-48">
               <img 
-                src={getDefaultImage(property.type)} 
+                src={getPropertyImage(property)} 
                 alt={property.address}
                 className="w-full h-full object-cover"
               />
+              <div className="absolute top-4 left-4 flex gap-2">
+                <button
+                  onClick={() => handleEditProperty(property)}
+                  className="bg-white bg-opacity-90 text-gray-700 p-2 rounded-full hover:bg-opacity-100 transition"
+                >
+                  <Edit className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => handleDeleteProperty(property.id)}
+                  className="bg-white bg-opacity-90 text-red-600 p-2 rounded-full hover:bg-opacity-100 transition"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
               <span className={`absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(property.status)}`}>
                 {property.status.charAt(0).toUpperCase() + property.status.slice(1)}
               </span>
@@ -372,6 +497,33 @@ function Properties() {
                   />
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Photos</label>
+                  <div className="space-y-2">
+                    {formData.photos.map((photo, index) => (
+                      <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                        <img src={photo} alt={`Photo ${index + 1}`} className="w-16 h-16 object-cover rounded" />
+                        <span className="flex-1 text-sm text-gray-600 truncate">{photo}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePhoto(index)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={handleAddPhoto}
+                      className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-coral hover:text-coral transition flex items-center justify-center gap-2"
+                    >
+                      <Image className="h-4 w-4" />
+                      Add Photo URL
+                    </button>
+                  </div>
+                </div>
+
                 {error && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                     <p className="text-red-600 text-sm">{error}</p>
@@ -392,6 +544,202 @@ function Properties() {
                     className="flex-1 bg-coral text-white py-3 rounded-lg hover:bg-coral-dark transition font-medium disabled:opacity-50"
                   >
                     {creating ? 'Creating...' : 'Create Property'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Property Modal */}
+      {showEditForm && editingProperty && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold text-navy">Edit Property</h2>
+                <button 
+                  onClick={() => {
+                    setShowEditForm(false)
+                    setEditingProperty(null)
+                    resetForm()
+                  }}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+
+              <form onSubmit={handleUpdateProperty} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                  <input
+                    type="text"
+                    name="address"
+                    value={formData.address}
+                    onChange={handleInputChange}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                    placeholder="123 Main Street, Austin, TX 78701"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Price</label>
+                    <input
+                      type="number"
+                      name="price"
+                      value={formData.price}
+                      onChange={handleInputChange}
+                      required
+                      min="0"
+                      step="1000"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                      placeholder="489000"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Property Type</label>
+                    <select
+                      name="type"
+                      value={formData.type}
+                      onChange={handleInputChange}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                    >
+                      <option value="house">House</option>
+                      <option value="condo">Condo</option>
+                      <option value="townhouse">Townhouse</option>
+                      <option value="land">Land</option>
+                      <option value="commercial">Commercial</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Bedrooms</label>
+                    <input
+                      type="number"
+                      name="beds"
+                      value={formData.beds}
+                      onChange={handleInputChange}
+                      required
+                      min="0"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                      placeholder="3"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Bathrooms</label>
+                    <input
+                      type="number"
+                      name="baths"
+                      value={formData.baths}
+                      onChange={handleInputChange}
+                      required
+                      min="0"
+                      step="0.5"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                      placeholder="2.5"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Square Feet</label>
+                    <input
+                      type="number"
+                      name="sqft"
+                      value={formData.sqft}
+                      onChange={handleInputChange}
+                      required
+                      min="0"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                      placeholder="2200"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                  <select
+                    name="status"
+                    value={formData.status}
+                    onChange={handleInputChange}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                  >
+                    <option value="active">Active</option>
+                    <option value="pending">Pending</option>
+                    <option value="sold">Sold</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                  <textarea
+                    name="description"
+                    value={formData.description}
+                    onChange={handleInputChange}
+                    required
+                    rows={4}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-coral"
+                    placeholder="Beautiful property with amazing features..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Photos</label>
+                  <div className="space-y-2">
+                    {formData.photos.map((photo, index) => (
+                      <div key={index} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
+                        <img src={photo} alt={`Photo ${index + 1}`} className="w-16 h-16 object-cover rounded" />
+                        <span className="flex-1 text-sm text-gray-600 truncate">{photo}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePhoto(index)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={handleAddPhoto}
+                      className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-coral hover:text-coral transition flex items-center justify-center gap-2"
+                    >
+                      <Image className="h-4 w-4" />
+                      Add Photo URL
+                    </button>
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-red-600 text-sm">{error}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditForm(false)
+                      setEditingProperty(null)
+                      resetForm()
+                    }}
+                    className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-lg hover:bg-gray-200 transition font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={updating}
+                    className="flex-1 bg-coral text-white py-3 rounded-lg hover:bg-coral-dark transition font-medium disabled:opacity-50"
+                  >
+                    {updating ? 'Updating...' : 'Update Property'}
                   </button>
                 </div>
               </form>

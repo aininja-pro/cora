@@ -1,56 +1,35 @@
 import { useState, useEffect } from 'react'
-import { Phone, Clock, MessageSquare, ChevronDown, ChevronUp, Archive, Trash2, Check, Square } from 'lucide-react'
-import { API_URL } from '../config'
+import { Phone, Clock, MessageSquare, ChevronDown, ChevronUp, Archive, Trash2, Check, Square, User, Settings } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { useCalls } from '../hooks/useCalls'
 
 function Calls() {
-  const [calls, setCalls] = useState([])
-  const [expandedCall, setExpandedCall] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [analyzingCall, setAnalyzingCall] = useState(null)
+  const { calls, loading, error, refetch } = useCalls('Ray Richards')
   const [selectedCalls, setSelectedCalls] = useState(new Set())
   const [bulkMode, setBulkMode] = useState(false)
 
-  useEffect(() => {
-    fetchCalls()
-  }, [])
+  const formatDuration = (startedAt, endedAt) => {
+    if (!endedAt) return 'Ongoing'
+    const start = new Date(startedAt)
+    const end = new Date(endedAt)
+    const diffMs = end - start
+    const diffSecs = Math.floor(diffMs / 1000)
+    const mins = Math.floor(diffSecs / 60)
+    const secs = diffSecs % 60
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
 
-  const fetchCalls = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/calls/recent?limit=50`)
-      const data = await response.json()
-      
-      if (data.success && data.calls) {
-        const transformedCalls = data.calls.map(call => {
-          // Parse stored GPT analysis from ai_response field
-          let storedAnalysis = null
-          if (call.ai_response) {
-            try {
-              storedAnalysis = JSON.parse(call.ai_response)
-            } catch (e) {
-              // Ignore parse errors for old format
-            }
-          }
-          
-          return {
-            id: call.id,
-            phoneNumber: call.phone_number || 'Unknown',
-            callerName: call.caller_name || 'Unknown Caller',
-            duration: call.duration || 0,
-            timestamp: new Date(call.created_at),
-            property: call.property_mentioned || 'Click to analyze',
-            leadScore: call.lead_score >= 75 ? 'Hot' : call.lead_score >= 60 ? 'Warm' : 'Cold',
-            callId: call.call_id,
-            analysis: storedAnalysis,
-            transcript: null,
-            hasStoredAnalysis: !!storedAnalysis
-          }
-        })
-        setCalls(transformedCalls)
-      }
-      setLoading(false)
-    } catch (error) {
-      console.error('Error fetching calls:', error)
-      setLoading(false)
+  const getCallStatus = (call) => {
+    if (call.ended_at) return 'completed'
+    return 'active'
+  }
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'active': return 'bg-green-50 text-green-700 border-green-200'
+      case 'completed': return 'bg-blue-50 text-blue-700 border-blue-200'
+      case 'failed': return 'bg-red-50 text-red-700 border-red-200'
+      default: return 'bg-gray-50 text-gray-700 border-gray-200'
     }
   }
 
@@ -225,11 +204,6 @@ function Calls() {
     }
   }
 
-  const formatDuration = (seconds) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}:${secs.toString().padStart(2, '0')}`
-  }
 
   const formatTime = (date) => {
     const now = new Date()
@@ -334,7 +308,7 @@ function Calls() {
               {/* Call Card Header */}
               <div 
                 className="p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                onClick={() => bulkMode ? toggleCallSelection(call.id) : toggleCallExpansion(call)}
+                onClick={() => bulkMode ? toggleCallSelection(call.id) : null}
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-start space-x-3">
@@ -357,16 +331,22 @@ function Calls() {
                     </div>
                     <div>
                       <div className="flex items-center space-x-2">
-                        <h3 className="font-semibold text-navy">
-                          {analyzingCall === call.id ? 'Loading...' : call.callerName}
-                        </h3>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getLeadScoreColor(call.leadScore)}`}>
-                          {call.leadScore}
+                        <Link 
+                          to={`/calls/${call.id}`}
+                          className="font-semibold text-navy hover:text-coral transition"
+                        >
+                          {call.caller_number || 'Unknown Caller'}
+                        </Link>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(getCallStatus(call))}`}>
+                          {getCallStatus(call)}
                         </span>
                       </div>
-                      <p className="text-sm text-gray-600">{call.phoneNumber}</p>
+                      <p className="text-sm text-gray-600">{new Date(call.started_at).toLocaleString()}</p>
                       <p className="text-sm text-gray-500 mt-1">
-                        Property: <span className="font-medium">{call.property}</span>
+                        Duration: <span className="font-medium">{formatDuration(call.started_at, call.ended_at)}</span>
+                        {call.outcome && (
+                          <span className="ml-2">• Outcome: <span className="font-medium">{call.outcome}</span></span>
+                        )}
                       </p>
                       {!call.hasStoredAnalysis && !bulkMode && (
                         <button 
@@ -384,7 +364,7 @@ function Calls() {
                       <p className="text-sm text-gray-500">{formatTime(call.timestamp)}</p>
                       <p className="text-sm text-gray-400 mt-1">
                         <Clock className="w-4 h-4 inline mr-1" />
-                        {formatDuration(call.duration)}
+                        {formatDuration(call.started_at, call.ended_at)}
                       </p>
                     </div>
                     
