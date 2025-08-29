@@ -5,7 +5,7 @@ Handles call lifecycle, tool execution, and event streaming
 
 from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from typing import Optional, List, Dict, Any, Literal, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import jwt
 import uuid
@@ -53,7 +53,7 @@ class CreateCallResponse(BaseModel):
 
 class CallEvent(BaseModel):
     type: Literal["turn", "tool_call", "tool_result", "status", "summary"]
-    ts: datetime
+    ts: Union[datetime, str]
     role: Optional[Literal["user", "assistant"]] = None
     text: Optional[str] = None
     ms: Optional[int] = None
@@ -200,64 +200,59 @@ async def create_call(request: CreateCallRequest, req: Request) -> CreateCallRes
 @router.post("/calls/{call_id}/events")
 async def add_call_event(
     call_id: str,
-    event: CallEvent,
-    req: Request,
+    evt: CallEvent,
+    request: Request,
     auth: Dict[str, str] = Depends(verify_call_jwt)
 ) -> Dict[str, bool]:
     """
-    Add event to call timeline (turn, tool call/result, status, summary)
+    Add event to call timeline (turn, tool call/result, status, summary) - FAIL LOUDLY VERSION
     """
-    request_id = str(uuid.uuid4())
-    start_time = time.time()
+    # 1) Auth + path sanity
+    if auth["call_id"] != call_id:
+        raise HTTPException(status_code=403, detail="call_id scope mismatch")
+
+    # 2) Normalize timestamp
+    if isinstance(evt.ts, str):
+        try:
+            ts = datetime.fromisoformat(evt.ts.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {evt.ts}")
+    else:
+        ts = evt.ts or datetime.now(timezone.utc)
     
+    # 3) Only process turn events with text
+    if evt.type != "turn" or not evt.text:
+        logger.info(f"Skipped {evt.type} event (not a turn with text)")
+        return {"ok": True, "skipped": True}
+        
+    payload = {
+        "call_id": call_id,
+        "speaker": evt.role,
+        "message": evt.text,
+        "timestamp": ts.isoformat(),
+        "sequence_number": int(time.time() % 1000000)  # Keep it under 1M to fit in INTEGER
+    }
+
+    # 4) Persist with explicit error handling
+    supabase = SupabaseService()
     try:
-        # CRITICAL: Verify call_id matches JWT
-        if auth["call_id"] != call_id:
-            logger.warning(f"[{request_id}] 403 Call ID mismatch: JWT={auth['call_id']} vs path={call_id}")
-            raise HTTPException(status_code=403, detail="Call ID mismatch")
-        
-        supabase = SupabaseService()
-        
-        # FORCE: Use call_transcripts table since call_turns has schema cache issues
-        if event.type == "turn" and event.text:
-            transcript_data = {
-                "call_id": call_id,
-                "speaker": event.role,
-                "message": event.text,
-                "timestamp": event.ts.isoformat() if isinstance(event.ts, datetime) else event.ts,
-                "sequence_number": int(time.time() * 1000)  # Unique sequence
-            }
-            
-            try:
-                supabase.client.table("call_transcripts").insert(transcript_data).execute()
-                logger.info(f"[{request_id}] SUCCESS: Saved {event.role} turn to call_transcripts")
-            except Exception as error:
-                logger.error(f"[{request_id}] FAILED to save transcript: {str(error)}")
-        else:
-            logger.info(f"[{request_id}] Skipped {event.type} event (not a turn with text)")
-        
-        # CRITICAL: If summary event, update calls table
-        if event.type == "summary":
-            update_data = {
-                "outcome": event.outcome,
-                "summary": event.text,
-                "ended_at": event.ts.isoformat() if isinstance(event.ts, datetime) else event.ts
-            }
-            supabase.client.table("calls").update(update_data).eq("id", call_id).execute()
-            logger.info(f"[{request_id}] Updated call outcome: {event.outcome}")
-        
-        # Observability  
-        latency_ms = round((time.time() - start_time) * 1000)
-        logger.info(f"[{request_id}] SUCCESS /api/calls/{call_id}/events type={event.type} tenant_id={auth['tenant_id']} latency_ms={latency_ms}")
-        
-        return {"ok": True}
-        
-    except HTTPException:
-        raise
+        res = supabase.client.table("call_transcripts").insert(payload).execute()
     except Exception as e:
-        latency_ms = round((time.time() - start_time) * 1000)
-        logger.error(f"[{request_id}] ERROR /api/calls/{call_id}/events type={event.type} tenant_id={auth.get('tenant_id', 'unknown')} latency_ms={latency_ms} error={str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to add event")
+        # Network/client error
+        raise HTTPException(status_code=502, detail=f"supabase client error: {e!s}")
+
+    # 5) Check Supabase response
+    data = getattr(res, "data", None)
+    error = getattr(res, "error", None)
+    if error:
+        # RLS/constraints/validation error -> surface it
+        raise HTTPException(status_code=500, detail=f"supabase insert error: {error}")
+    if not data:
+        # Some clients return None on error; be strict
+        raise HTTPException(status_code=500, detail="supabase returned no data")
+
+    logger.info(f"SUCCESS: Saved {evt.role} turn to call_transcripts: {evt.text[:50]}...")
+    return {"ok": True, "inserted": len(data)}
 
 @router.post("/tools/execute", response_model=ToolEnvelope)
 async def execute_tool(

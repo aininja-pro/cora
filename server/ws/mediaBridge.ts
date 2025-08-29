@@ -16,7 +16,7 @@ import { makeBackendClient } from '../lib/backendClient';
 import { WhisperFeeder } from '../lib/whisperFeeder';
 import { bindRealtime, sendToOpenAI, FEEDER_TOKEN } from '../lib/realtimeSend';
 import { createRealtimeForCall } from '../lib/realtimeInit';
-import { flushBacklog, wireTranscriptPersistence } from '../lib/transcriptPersistence';
+import { flushBacklog } from '../lib/transcriptPersistence';
 import { CallCtx, makeCallCtx } from '../lib/callCtx';
 import { wireRealtimeTracer } from '../lib/tracer';
 import WebSocket from 'ws';
@@ -253,9 +253,8 @@ Start with this exact greeting, then wait for the caller:
         } catch { /* ignore */ }
       });
       
-      // wire tracer + persistence BEFORE any session.update or audio
+      // wire tracer only (persistence handled directly in handleRealtimeMessage)
       wireRealtimeTracer(realtimeWs);
-      wireTranscriptPersistence(realtimeWs, ctx, { captureTTS: true });
       
       // Force modalities and transcription (send once, before audio)
       sendToOpenAI({
