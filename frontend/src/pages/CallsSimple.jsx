@@ -396,33 +396,24 @@ function CallsSimple() {
           console.log('Call details:', callData)
           console.log('Transcript data:', transcriptData)
           
-          // Try to get analysis if available
+          // Try to get saved analysis from the call data (API returns it directly)
           let analysis = null;
-          if (callData.call?.ai_response) {
+          if (call.ai_response) {
             try {
-              analysis = JSON.parse(callData.call.ai_response);
+              analysis = JSON.parse(call.ai_response);
+              console.log('Loaded saved analysis:', analysis);
             } catch (e) {
-              console.log('Could not parse analysis from ai_response');
+              console.log('Could not parse saved ai_response:', e);
             }
           }
           
-          // If no analysis, trigger it
-          if (!analysis) {
+          // If still no analysis, check the call details response
+          if (!analysis && callData.call?.ai_response) {
             try {
-              console.log(`Triggering analysis for call ${call.id}`);
-              setAnalyzingCall(call.id);
-              
-              const analysisResponse = await fetch(`http://localhost:8000/api/calls/${call.id}/analyze`);
-              
-              if (analysisResponse.ok) {
-                const analysisData = await analysisResponse.json();
-                analysis = analysisData.analysis;
-                console.log('Generated fresh analysis:', analysis);
-              }
-            } catch (error) {
-              console.log('Analysis generation failed:', error);
-            } finally {
-              setAnalyzingCall(null);
+              analysis = JSON.parse(callData.call.ai_response);
+              console.log('Loaded analysis from call details:', analysis);
+            } catch (e) {
+              console.log('Could not parse analysis from call details');
             }
           }
           
