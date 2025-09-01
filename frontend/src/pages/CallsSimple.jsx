@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Phone, Clock, User, MessageSquare, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronUp, Bot, Calendar, MapPin, DollarSign, Home } from 'lucide-react'
+import { Phone, Clock, User, MessageSquare, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronUp, Bot, Calendar, MapPin, DollarSign, Home, Trash2 } from 'lucide-react'
 
 function CallsSimple() {
   const [calls, setCalls] = useState([])
@@ -8,6 +8,8 @@ function CallsSimple() {
   const [expandedCall, setExpandedCall] = useState(null)
   const [callDetails, setCallDetails] = useState({})
   const [analyzingCall, setAnalyzingCall] = useState(null)
+  const [selectedCalls, setSelectedCalls] = useState(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   useEffect(() => {
     fetchCalls()
@@ -109,6 +111,72 @@ function CallsSimple() {
     }
   }
 
+  const formatPhoneNumber = (phone) => {
+    if (!phone) return 'Unknown Number'
+    
+    // Remove all non-digits
+    const cleaned = phone.replace(/\D/g, '')
+    
+    // Format as (XXX) XXX-XXXX
+    if (cleaned.length === 11 && cleaned.startsWith('1')) {
+      // Remove leading 1
+      const withoutCountry = cleaned.slice(1)
+      return `(${withoutCountry.slice(0, 3)}) ${withoutCountry.slice(3, 6)}-${withoutCountry.slice(6)}`
+    } else if (cleaned.length === 10) {
+      return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3, 6)}-${cleaned.slice(6)}`
+    }
+    
+    return phone // Return original if can't format
+  }
+
+  const getCallPreviewInfo = (call) => {
+    // Extract useful info for collapsed state
+    let preview = {
+      title: `Call from ${formatPhoneNumber(call.caller_number)}`,
+      subtitle: '',
+      badges: []
+    }
+
+    // Add caller name if available
+    if (call.caller_name && call.caller_name !== 'null') {
+      preview.title = `${call.caller_name} • ${formatPhoneNumber(call.caller_number)}`
+    }
+
+    // Add location if available
+    if (call.caller_city && call.caller_state) {
+      preview.subtitle = `${call.caller_city}, ${call.caller_state}`
+    }
+
+    // Add outcome/result info
+    if (call.outcome && call.outcome !== 'unknown') {
+      const outcomeLabels = {
+        'showing_scheduled': '📅 Showing Scheduled',
+        'callback_scheduled': '📞 Callback Requested', 
+        'information_provided': '💡 Info Provided',
+        'lead_captured': '🎯 Lead Captured',
+        'property_inquiry': '🏠 Property Interest',
+        'listing_consultation': '📋 Listing Consult'
+      }
+      preview.badges.push(outcomeLabels[call.outcome] || call.outcome)
+    }
+
+    // Add call type
+    if (call.call_type && call.call_type !== 'unknown') {
+      const typeLabels = {
+        'property_inquiry': '🏠 Property Search',
+        'listing_consultation': '📋 Listing',
+        'callback_request': '📞 Callback',
+        'general_service': '💬 General',
+        'investment': '💰 Investment'
+      }
+      if (!preview.badges.some(badge => badge.includes('Property') || badge.includes('Listing'))) {
+        preview.badges.push(typeLabels[call.call_type] || call.call_type.replace('_', ' '))
+      }
+    }
+
+    return preview
+  }
+
   const getStatusColor = (call) => {
     const status = call.ended_at ? 'completed' : 'active'
     switch (status) {
@@ -179,6 +247,108 @@ function CallsSimple() {
       console.error('Error generating analysis:', error);
     } finally {
       setAnalyzingCall(null);
+    }
+  };
+
+  const deleteCall = async (callId) => {
+    if (!window.confirm('Are you sure you want to delete this call? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      console.log(`Deleting call ${callId}`);
+      const response = await fetch(`http://localhost:8000/api/calls/${callId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        // Remove from local state
+        setCalls(prev => prev.filter(call => call.id !== callId));
+        setCallDetails(prev => {
+          const updated = { ...prev };
+          delete updated[callId];
+          return updated;
+        });
+        // Close expansion if this call was expanded
+        if (expandedCall === callId) {
+          setExpandedCall(null);
+        }
+        console.log(`Call ${callId} deleted successfully`);
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        alert(`Failed to delete call: ${errorData.detail || response.statusText}`);
+        console.error('Delete failed:', response.status, errorData);
+      }
+    } catch (error) {
+      console.error('Error deleting call:', error);
+      alert('Failed to delete call. Please try again.');
+    }
+  };
+
+  const toggleCallSelection = (callId) => {
+    const newSelected = new Set(selectedCalls);
+    if (newSelected.has(callId)) {
+      newSelected.delete(callId);
+    } else {
+      newSelected.add(callId);
+    }
+    setSelectedCalls(newSelected);
+  };
+
+  const selectAllCalls = () => {
+    if (selectedCalls.size === calls.length) {
+      setSelectedCalls(new Set());
+    } else {
+      setSelectedCalls(new Set(calls.map(call => call.id)));
+    }
+  };
+
+  const bulkDeleteCalls = async () => {
+    if (selectedCalls.size === 0) return;
+    
+    if (!window.confirm(`Are you sure you want to delete ${selectedCalls.size} call(s)? This action cannot be undone.`)) {
+      return;
+    }
+
+    setBulkDeleting(true);
+    
+    try {
+      const response = await fetch('http://localhost:8000/api/calls/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          call_ids: Array.from(selectedCalls)
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Bulk delete result:', result);
+        
+        // Remove deleted calls from UI
+        setCalls(prev => prev.filter(call => !selectedCalls.has(call.id)));
+        setCallDetails(prev => {
+          const updated = { ...prev };
+          selectedCalls.forEach(callId => delete updated[callId]);
+          return updated;
+        });
+        setSelectedCalls(new Set());
+        setExpandedCall(null);
+        
+        alert(`Successfully deleted ${result.deleted_count} call(s)`);
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        alert(`Failed to delete calls: ${errorData.detail || response.statusText}`);
+        console.error('Bulk delete failed:', response.status, errorData);
+      }
+      
+    } catch (error) {
+      console.error('Bulk delete error:', error);
+      alert('Failed to delete calls. Please try again.');
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -389,6 +559,21 @@ function CallsSimple() {
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-navy">Voice Calls</h1>
         <div className="flex items-center space-x-4">
+          {selectedCalls.size > 0 && (
+            <div className="flex items-center space-x-3">
+              <span className="text-sm text-gray-600">
+                {selectedCalls.size} selected
+              </span>
+              <button
+                onClick={bulkDeleteCalls}
+                disabled={bulkDeleting}
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition disabled:opacity-50 flex items-center space-x-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>{bulkDeleting ? 'Deleting...' : `Delete ${selectedCalls.size}`}</span>
+              </button>
+            </div>
+          )}
           <button 
             onClick={fetchCalls}
             className="px-4 py-2 bg-coral text-white rounded-lg hover:bg-coral/80 transition"
@@ -400,6 +585,39 @@ function CallsSimple() {
           </span>
         </div>
       </div>
+
+      {/* Bulk Selection Controls */}
+      {calls.length > 0 && (
+        <div className="flex items-center justify-between bg-gray-50 rounded-lg p-4">
+          <div className="flex items-center space-x-3">
+            <label className="flex items-center space-x-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedCalls.size === calls.length && calls.length > 0}
+                onChange={selectAllCalls}
+                className="rounded border-gray-300 text-coral focus:ring-coral"
+              />
+              <span className="text-sm text-gray-700">
+                {selectedCalls.size === calls.length && calls.length > 0 ? 'Deselect all' : 'Select all'}
+              </span>
+            </label>
+            {selectedCalls.size > 0 && (
+              <span className="text-sm text-coral font-medium">
+                {selectedCalls.size} of {calls.length} calls selected
+              </span>
+            )}
+          </div>
+          
+          {selectedCalls.size > 0 && (
+            <button
+              onClick={() => setSelectedCalls(new Set())}
+              className="text-sm text-gray-500 hover:text-gray-700 transition"
+            >
+              Clear selection
+            </button>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -422,11 +640,21 @@ function CallsSimple() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
+                  {/* Selection Checkbox */}
+                  <input
+                    type="checkbox"
+                    checked={selectedCalls.has(call.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      toggleCallSelection(call.id);
+                    }}
+                    className="rounded border-gray-300 text-coral focus:ring-coral"
+                  />
                   {getStatusIcon(call)}
                   <div>
                     <div className="flex items-center space-x-2 mb-1">
                       <h3 className="font-semibold text-gray-900 hover:text-coral transition">
-                        {call.caller_name || call.caller_number || 'Unknown Caller'}
+                        {getCallPreviewInfo(call).title}
                       </h3>
                       {call.lead_quality && (
                         <span className={`px-2 py-0.5 rounded text-xs font-medium ${
@@ -437,20 +665,26 @@ function CallsSimple() {
                           {call.lead_quality}
                         </span>
                       )}
-                      {call.caller_city && call.caller_state && (
-                        <span className="text-xs text-gray-500 bg-gray-50 px-2 py-0.5 rounded">
-                          📍 {call.caller_city}, {call.caller_state}
-                        </span>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm text-gray-500">
+                        {new Date(call.started_at).toLocaleString()}
+                      </p>
+                      {getCallPreviewInfo(call).subtitle && (
+                        <p className="text-xs text-gray-500">
+                          📍 {getCallPreviewInfo(call).subtitle}
+                        </p>
+                      )}
+                      {getCallPreviewInfo(call).badges.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {getCallPreviewInfo(call).badges.map((badge, idx) => (
+                            <span key={idx} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </div>
-                    <p className="text-sm text-gray-500">
-                      {new Date(call.started_at).toLocaleString()}
-                      {call.call_type && (
-                        <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                          {call.call_type.replace('_', ' ')}
-                        </span>
-                      )}
-                    </p>
                   </div>
                 </div>
                 
@@ -470,6 +704,18 @@ function CallsSimple() {
                       </p>
                     )}
                   </div>
+                  
+                  {/* Delete Button */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteCall(call.id);
+                    }}
+                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete call"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
                   
                   {/* Expand/Collapse Icon */}
                   {expandedCall === call.id ? 
