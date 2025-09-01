@@ -1,7 +1,6 @@
 // realtimeInit.ts
 import WebSocket from "ws";
 import { wireRealtimeTracer } from "./tracer";
-import { wireTranscriptPersistence } from "./transcriptPersistence";
 import { bindRealtime, sendToOpenAI } from "./realtimeSend"; // your wrapper
 import { CallCtx } from "./callCtx";
 
@@ -26,11 +25,8 @@ export function createRealtimeForCall(opts: {
     // bind send wrapper to THIS socket
     bindRealtime(ws);
 
-    // wire tracer + V4 persistence BEFORE any session.update or audio
+    // wire tracer only (persistence handled in mediaBridge.ts handleRealtimeMessage)
     wireRealtimeTracer(ws);
-    wireTranscriptPersistence(ws, callCtx, {
-      captureTTS: true, // since you saw response.audio_transcript.done
-    });
 
     // now lock the session with full config
     sendToOpenAI({

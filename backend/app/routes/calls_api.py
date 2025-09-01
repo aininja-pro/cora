@@ -487,13 +487,11 @@ async def delete_call(call_id: str) -> Dict[str, Any]:
         # Delete the call (cascading deletes will handle transcripts, etc.)
         response = supabase.client.table("calls").delete().eq("id", call_id).execute()
         
-        if response.data:
-            return {
-                "success": True,
-                "message": f"Call {call_id} deleted successfully"
-            }
-        else:
-            raise HTTPException(status_code=404, detail="Call not found")
+        # Check if delete was successful (no exception means success)
+        return {
+            "success": True,
+            "message": f"Call {call_id} deleted successfully"
+        }
             
     except HTTPException:
         raise
@@ -524,6 +522,7 @@ async def bulk_delete_calls(
         # Delete all calls in the list
         response = supabase.client.table("calls").delete().in_("id", call_ids).execute()
         
+        # If no exception was thrown, delete was successful
         return {
             "success": True,
             "deleted_count": len(call_ids),

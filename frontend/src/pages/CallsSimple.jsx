@@ -102,12 +102,37 @@ function CallsSimple() {
   }
 
   const getStatusIcon = (call) => {
-    const status = call.ended_at ? 'completed' : 'active'
+    // Use call_status field, fallback to ended_at check
+    const status = call.call_status || (call.ended_at ? 'completed' : 'in_progress')
     switch (status) {
-      case 'active': return <Phone className="h-4 w-4 text-green-500" />
+      case 'in_progress': return <Phone className="h-4 w-4 text-green-500" />
       case 'completed': return <CheckCircle className="h-4 w-4 text-blue-500" />
       case 'failed': return <XCircle className="h-4 w-4 text-red-500" />
+      case 'missed': return <AlertCircle className="h-4 w-4 text-yellow-500" />
       default: return <AlertCircle className="h-4 w-4 text-gray-500" />
+    }
+  }
+
+  const getStatusColor = (call) => {
+    // Use call_status field, fallback to ended_at check  
+    const status = call.call_status || (call.ended_at ? 'completed' : 'in_progress')
+    switch (status) {
+      case 'in_progress': return 'bg-green-50 text-green-700 border-green-200'
+      case 'completed': return 'bg-blue-50 text-blue-700 border-blue-200'
+      case 'failed': return 'bg-red-50 text-red-700 border-red-200'
+      case 'missed': return 'bg-yellow-50 text-yellow-700 border-yellow-200'
+      default: return 'bg-gray-50 text-gray-700 border-gray-200'
+    }
+  }
+
+  const getStatusLabel = (call) => {
+    const status = call.call_status || (call.ended_at ? 'completed' : 'in_progress')
+    switch (status) {
+      case 'in_progress': return 'Active'
+      case 'completed': return 'Completed' 
+      case 'failed': return 'Failed'
+      case 'missed': return 'Missed'
+      default: return 'Unknown'
     }
   }
 
@@ -177,15 +202,6 @@ function CallsSimple() {
     return preview
   }
 
-  const getStatusColor = (call) => {
-    const status = call.ended_at ? 'completed' : 'active'
-    switch (status) {
-      case 'active': return 'bg-green-50 text-green-700 border-green-200'
-      case 'completed': return 'bg-blue-50 text-blue-700 border-blue-200'
-      case 'failed': return 'bg-red-50 text-red-700 border-red-200'
-      default: return 'bg-gray-50 text-gray-700 border-gray-200'
-    }
-  }
 
   // Process transcript entries to merge consecutive messages and ensure chronological order
   const processTranscriptEntries = (entries) => {
@@ -690,7 +706,7 @@ function CallsSimple() {
                 
                 <div className="flex items-center space-x-4">
                   <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(call)}`}>
-                    {call.ended_at ? 'completed' : 'active'}
+                    {getStatusLabel(call)}
                   </span>
                   
                   <div className="text-right">

@@ -105,11 +105,19 @@ Available properties: 123 Main Street ($489k), 456 Oak Avenue ($325k), 789 Pine 
             analysis_text = response.choices[0].message.content
             
             try:
-                analysis = json.loads(analysis_text)
+                # Strip markdown code blocks if present
+                clean_text = analysis_text.strip()
+                if clean_text.startswith('```json'):
+                    clean_text = clean_text[7:]  # Remove ```json
+                if clean_text.endswith('```'):
+                    clean_text = clean_text[:-3]  # Remove ```
+                clean_text = clean_text.strip()
+                
+                analysis = json.loads(clean_text)
                 logger.info(f"Call analysis completed: {analysis.get('caller_name', 'No name')} - {analysis.get('lead_quality', 'unknown')} lead")
                 return analysis
             except json.JSONDecodeError:
-                logger.warning(f"Failed to parse GPT analysis as JSON: {analysis_text}")
+                logger.warning(f"Failed to parse GPT analysis as JSON: {analysis_text[:200]}...")
                 return self._parse_text_analysis(analysis_text)
                 
         except Exception as e:
