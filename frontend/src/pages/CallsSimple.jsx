@@ -663,15 +663,39 @@ function CallsSimple() {
                       <h3 className="font-semibold text-gray-900 hover:text-coral transition">
                         {getCallPreviewInfo(call).title}
                       </h3>
-                      {call.lead_quality && (
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          call.lead_quality === 'hot' ? 'bg-red-100 text-red-700' :
-                          call.lead_quality === 'warm' ? 'bg-yellow-100 text-yellow-700' :
-                          'bg-blue-100 text-blue-700'
-                        }`}>
-                          {call.lead_quality}
-                        </span>
-                      )}
+                    </div>
+                    {/* Analysis Tags */}
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {call.ai_response && (() => {
+                        try {
+                          const analysis = JSON.parse(call.ai_response);
+                          return (
+                            <>
+                              {analysis.call_type && (
+                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+                                  {analysis.call_type.replace('_', ' ')}
+                                </span>
+                              )}
+                              {analysis.lead_quality && (
+                                <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                  analysis.lead_quality === 'hot' ? 'bg-red-100 text-red-700' :
+                                  analysis.lead_quality === 'warm' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-blue-100 text-blue-700'
+                                }`}>
+                                  🔥 {analysis.lead_quality.toUpperCase()} LEAD
+                                </span>
+                              )}
+                              {analysis.callback_requested === true && (
+                                <span className="px-2 py-0.5 rounded text-xs bg-orange-100 text-orange-700">
+                                  📞 Callback Requested
+                                </span>
+                              )}
+                            </>
+                          );
+                        } catch (e) {
+                          return null;
+                        }
+                      })()}
                     </div>
                     <div className="space-y-1">
                       <p className="text-sm text-gray-500">
@@ -696,10 +720,6 @@ function CallsSimple() {
                 </div>
                 
                 <div className="flex items-center space-x-4">
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(call)}`}>
-                    {getStatusLabel(call)}
-                  </span>
-                  
                   <div className="text-right">
                     <div className="flex items-center space-x-1 text-sm text-gray-500">
                       <Clock className="h-4 w-4" />
@@ -767,32 +787,6 @@ function CallsSimple() {
                         </div>
                         
                         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
-                          {/* Call Type & Lead Quality Header */}
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                                callDetails[call.id].analysis.call_type === 'property_inquiry' ? 'bg-green-100 text-green-700' :
-                                callDetails[call.id].analysis.call_type === 'listing_consultation' ? 'bg-blue-100 text-blue-700' :
-                                callDetails[call.id].analysis.call_type === 'callback_request' ? 'bg-purple-100 text-purple-700' :
-                                callDetails[call.id].analysis.call_type === 'investment' ? 'bg-orange-100 text-orange-700' :
-                                'bg-gray-100 text-gray-700'
-                              }`}>
-                                {callDetails[call.id].analysis.call_type?.replace('_', ' ') || 'general inquiry'}
-                              </span>
-                              <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                                callDetails[call.id].analysis.lead_quality === 'hot' ? 'bg-red-100 text-red-700 border border-red-200' :
-                                callDetails[call.id].analysis.lead_quality === 'warm' ? 'bg-yellow-100 text-yellow-700 border border-yellow-200' :
-                                'bg-blue-100 text-blue-700 border border-blue-200'
-                              }`}>
-                                🔥 {callDetails[call.id].analysis.lead_quality?.toUpperCase()} LEAD
-                              </span>
-                            </div>
-                            {callDetails[call.id].analysis.callback_requested && (
-                              <span className="px-2 py-1 rounded text-xs bg-orange-100 text-orange-700 border border-orange-200">
-                                📞 Callback Requested
-                              </span>
-                            )}
-                          </div>
                           
                           {/* Call Summary */}
                           <div className="bg-gray-50 rounded-lg p-3">

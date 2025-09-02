@@ -164,6 +164,7 @@ Available properties: 123 Main Street ($489k), 456 Oak Avenue ($325k), 789 Pine 
             analysis["lead_quality"] = "cold"
         
         analysis["call_summary"] = "Analysis completed but format was unclear"
+        analysis["sms_summary"] = f"Call from caller - {analysis['lead_quality']} lead, analysis unclear"
         
         return analysis
     
@@ -173,14 +174,20 @@ Available properties: 123 Main Street ($489k), 456 Oak Avenue ($325k), 789 Pine 
             "caller_name": None,
             "phone_number": None,
             "email": None,
+            "call_type": "other",
             "property_interests": [],
+            "listing_interest": False,
+            "service_requested": None,
             "budget_mentioned": None,
             "bedrooms_wanted": None,
             "timeline": None,
             "scheduling_requests": None,
+            "callback_requested": False,
             "lead_quality": "cold",
             "call_summary": "No transcript available for analysis",
             "key_highlights": [],
             "next_actions": [],
-            "interest_level": "low"
+            "interest_level": "low",
+            "urgency": "unknown",
+            "sms_summary": "Call received - no transcript available for analysis"
         }
