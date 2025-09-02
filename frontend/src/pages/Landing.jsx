@@ -9,7 +9,7 @@ function Landing({ onLogin }) {
         <div className="text-center">
           <img src={logo} alt="CORA" className="h-20 mx-auto mb-8" />
           <h1 className="text-4xl font-bold text-navy mb-4">
-            AI Voice Assistant for Real Estate
+            🎯 CORA: AI Voice Assistant for Real Estate
           </h1>
           <p className="text-lg text-gray-600 mb-8 max-w-md mx-auto">
             Never miss a lead. Cora answers every call, qualifies buyers, and schedules showings 24/7.

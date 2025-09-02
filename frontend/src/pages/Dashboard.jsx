@@ -1,15 +1,41 @@
 import { useState, useEffect } from 'react'
-import { Phone, Building, Users, TrendingUp, ArrowRight } from 'lucide-react'
+import { Phone, Building, Users, TrendingUp, ArrowRight, Mic, Calendar, MessageSquare, AlertTriangle, Clock, CheckCircle } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { createClient } from '@supabase/supabase-js'
+
+// Components
+import KPISection from '../components/dashboard/KPISection'
+import UrgentSection from '../components/dashboard/UrgentSection'
+import LiveFeed from '../components/dashboard/LiveFeed'
+import MyQueue from '../components/dashboard/MyQueue'
+import VoiceFAB from '../components/dashboard/VoiceFAB'
+import OnboardingFlow from '../components/dashboard/OnboardingFlow'
+
+// Services
+import sampleDataService from '../services/sampleDataService'
+import autoResolutionService from '../services/autoResolutionService'
+
+// Initialize Supabase client
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 function Dashboard() {
   const [agent, setAgent] = useState(null)
+  const [isFirstRun, setIsFirstRun] = useState(false)
   const [stats, setStats] = useState({
-    activeListings: 3,
-    callsToday: 7,
-    newLeads: 4,
-    scheduledShowings: 2
+    totalCalls: 0,
+    answeredRate: 0,
+    bookedShowings: 0,
+    needsFollowUp: 0
   })
+  const [timeRange, setTimeRange] = useState('today') // today, 7d, 30d
+  const [selectedAgents, setSelectedAgents] = useState(['all'])
+  const [urgentItems, setUrgentItems] = useState([])
+  const [liveFeedItems, setLiveFeedItems] = useState([])
+  const [queueItems, setQueueItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [useSampleData, setUseSampleData] = useState(false)
 
   useEffect(() => {
     // Get agent info from localStorage
@@ -17,141 +43,639 @@ function Dashboard() {
     if (agentData) {
       setAgent(JSON.parse(agentData))
     }
-  }, [])
+
+    // Check if this is first run (no real data exists)
+    checkFirstRun()
+    
+    // Load dashboard data
+    loadDashboardData()
+    
+    // Set up realtime subscriptions
+    const cleanupSubscriptions = setupRealtimeSubscriptions()
+    
+    // Set up auto-resolution processing
+    const autoResolutionInterval = setupAutoResolution()
+    
+    return () => {
+      // Cleanup subscriptions and intervals
+      if (cleanupSubscriptions) cleanupSubscriptions()
+      if (autoResolutionInterval) clearInterval(autoResolutionInterval)
+    }
+  }, [timeRange, selectedAgents])
+
+  const checkFirstRun = async () => {
+    try {
+      const { data: calls } = await supabase
+        .from('calls')
+        .select('id')
+        .limit(1)
+      
+      const hasRealData = calls && calls.length > 0
+      const shouldUseSample = sampleDataService.shouldShowSampleData(hasRealData ? calls.length : 0) && 
+                             !sampleDataService.isSampleDataHidden()
+      
+      // Force onboarding for demo (remove this line in production)
+      setIsFirstRun(true)
+      setUseSampleData(shouldUseSample)
+    } catch (error) {
+      console.error('Error checking first run:', error)
+      setIsFirstRun(true)
+      setUseSampleData(false)
+    }
+  }
+
+  const loadDashboardData = async () => {
+    setLoading(true)
+    try {
+      await Promise.all([
+        loadKPIData(),
+        loadUrgentItems(),
+        loadLiveFeed(),
+        loadMyQueue()
+      ])
+    } catch (error) {
+      console.error('Error loading dashboard data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadKPIData = async () => {
+    try {
+      // Use sample data if enabled
+      if (useSampleData) {
+        const sampleStats = sampleDataService.getSampleStats(timeRange)
+        setStats(sampleStats)
+        return
+      }
+
+      // Calculate date ranges based on timeRange
+      const now = new Date()
+      let startDate
+      
+      switch (timeRange) {
+        case 'today':
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+          break
+        case '7d':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+          break
+        case '30d':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+          break
+        default:
+          startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      }
+
+      // Fetch calls data with date range
+      const callsResponse = await fetch(`/api/calls/search?start_date=${startDate.toISOString()}&end_date=${now.toISOString()}`)
+      const callsData = await callsResponse.json()
+      
+      if (callsData.success) {
+        const calls = callsData.calls || []
+        
+        // KPI Formulas per specifications:
+        
+        // Total calls = count of calls with started_at in range
+        const totalCalls = calls.length
+        
+        // Answered rate = answered / (answered + missed)
+        // answered: status IN ('answered','completed')
+        // missed: status IN ('no_answer','busy','failed')
+        const answered = calls.filter(call => 
+          ['answered', 'completed'].includes(call.status)
+        ).length
+        const missed = calls.filter(call => 
+          ['no_answer', 'busy', 'failed'].includes(call.status)
+        ).length
+        const answeredRate = (answered + missed) > 0 ? Math.round((answered / (answered + missed)) * 100) : 0
+        
+        // Booked showings = count of appointments with status IN ('scheduled','confirmed') and start in range
+        // For now, using property_inquiries as proxy until appointments API is available
+        const bookedShowingsResponse = await fetch(`/api/calls/properties/inquiries?days=${timeRange === 'today' ? 1 : timeRange === '7d' ? 7 : 30}`)
+        const bookedShowingsData = await bookedShowingsResponse.json()
+        const bookedShowings = bookedShowingsData.success ? bookedShowingsData.total_inquiries || 0 : 0
+        
+        // Needs follow-up = calls where the last turn is assistant AND there's no agent action flag
+        const needsFollowUp = calls.filter(call => {
+          // Check if last transcript turn is from assistant
+          const transcriptEntries = call.transcript_entries || []
+          if (transcriptEntries.length === 0) return false
+          
+          const lastEntry = transcriptEntries[transcriptEntries.length - 1]
+          const lastTurnIsAssistant = lastEntry && lastEntry.role === 'assistant'
+          
+          // Check for agent action flags (no "contacted", "sms_sent", "task_closed")
+          const hasAgentAction = call.agent_contacted || call.sms_sent || call.task_closed
+          
+          return lastTurnIsAssistant && !hasAgentAction
+        }).length
+        
+        setStats({
+          totalCalls,
+          answeredRate,
+          bookedShowings,
+          needsFollowUp
+        })
+      }
+    } catch (error) {
+      console.error('Error loading KPI data:', error)
+      // Fallback to sample data
+      const sampleStats = sampleDataService.getSampleStats(timeRange)
+      setStats(sampleStats)
+    }
+  }
+
+  const loadUrgentItems = async () => {
+    try {
+      // Use sample data if enabled
+      if (useSampleData) {
+        const sampleUrgent = sampleDataService.getSampleUrgentItems()
+        setUrgentItems(sampleUrgent)
+        return
+      }
+
+      const now = new Date()
+      const businessHours = isBusinessHours(now)
+      
+      // Fetch recent calls and appointments for priority analysis
+      const [callsResponse, appointmentsResponse] = await Promise.all([
+        fetch(`/api/calls/recent?limit=100`),
+        // fetch(`/api/appointments/upcoming`) // When appointments API is available
+      ])
+      
+      const callsData = await callsResponse.json()
+      const calls = callsData.success ? callsData.calls || [] : []
+      
+      const urgentItems = []
+      
+      // Process each call for urgent conditions
+      for (const call of calls) {
+        const callTime = new Date(call.created_at)
+        const minutesSince = (now - callTime) / (1000 * 60)
+        
+        // URGENT (red) conditions
+        
+        // 1. Contract/finance deadline due ≤24h or overdue
+        if (call.ai_response && call.ai_response.contract_deadline) {
+          const deadline = new Date(call.ai_response.contract_deadline)
+          const hoursUntilDeadline = (deadline - now) / (1000 * 60 * 60)
+          
+          if (hoursUntilDeadline <= 24) {
+            urgentItems.push({
+              id: `contract_${call.id}`,
+              priority: 'urgent',
+              title: hoursUntilDeadline < 0 ? 'Contract deadline overdue!' : `Contract deadline due in ${Math.round(hoursUntilDeadline)}h`,
+              context: `${call.caller_name || 'Caller'} - ${call.ai_response.property_address || 'Property'} contract`,
+              time: hoursUntilDeadline < 0 ? 'OVERDUE' : `${Math.round(hoursUntilDeadline)}h`,
+              actions: ['Review Contract', 'Call Client'],
+              callId: call.id
+            })
+          }
+        }
+        
+        // 2. Callback requested and unanswered for ≥30 min during business hours
+        if (businessHours && call.ai_response && call.ai_response.callback_requested && !call.agent_contacted) {
+          if (minutesSince >= 30) {
+            urgentItems.push({
+              id: `callback_${call.id}`,
+              priority: 'urgent',
+              title: 'Callback overdue',
+              context: `${call.caller_name || call.phone_number} requested callback ${Math.round(minutesSince)}m ago`,
+              time: `${Math.round(minutesSince)}m`,
+              actions: ['Call Now', 'Send SMS'],
+              callId: call.id
+            })
+          }
+        }
+        
+        // 3. New qualified lead with no agent touch ≥60 min (business hours)
+        if (businessHours && call.ai_response && call.ai_response.lead_qualified && !call.agent_contacted) {
+          if (minutesSince >= 60) {
+            urgentItems.push({
+              id: `qualified_${call.id}`,
+              priority: 'urgent', 
+              title: 'Qualified lead needs attention',
+              context: `${call.caller_name || call.phone_number} - High quality lead, ${Math.round(minutesSince)}m ago`,
+              time: `${Math.round(minutesSince)}m`,
+              actions: ['Call Back', 'Send Info'],
+              callId: call.id
+            })
+          }
+        }
+        
+        // 4. Voicemail from new lead and no agent touch ≥30 min
+        if (call.status === 'no_answer' && call.voicemail_left && !call.agent_contacted) {
+          if (minutesSince >= 30) {
+            urgentItems.push({
+              id: `voicemail_${call.id}`,
+              priority: 'urgent',
+              title: 'New voicemail needs response', 
+              context: `${call.caller_name || call.phone_number} left voicemail ${Math.round(minutesSince)}m ago`,
+              time: `${Math.round(minutesSince)}m`,
+              actions: ['Listen', 'Call Back'],
+              callId: call.id
+            })
+          }
+        }
+        
+        // SCHEDULING CONFLICT (yellow) conditions
+        
+        // TODO: Two showings for same agent overlap or gap < 30 min within next 48h
+        // TODO: Unconfirmed showing starts in ≤12h
+        
+        // ROUTINE (blue) conditions - handled in separate section
+      }
+      
+      // Sort: Urgent > Conflict > Routine. Within each: ascending by deadline/start time, then created_at
+      urgentItems.sort((a, b) => {
+        const priorityOrder = { urgent: 0, scheduling_conflict: 1, routine: 2 }
+        if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+          return priorityOrder[a.priority] - priorityOrder[b.priority]
+        }
+        
+        // Within same priority, sort by time (most urgent first)
+        const aTime = parseFloat(a.time) || 0
+        const bTime = parseFloat(b.time) || 0
+        return bTime - aTime // Higher time = more urgent
+      })
+      
+      setUrgentItems(urgentItems)
+      
+    } catch (error) {
+      console.error('Error loading urgent items:', error)
+      // Fallback to sample data
+      const sampleUrgent = sampleDataService.getSampleUrgentItems()
+      setUrgentItems(sampleUrgent)
+    }
+  }
+  
+  const isBusinessHours = (date) => {
+    const hour = date.getHours()
+    const day = date.getDay() // 0 = Sunday, 6 = Saturday
+    return day >= 1 && day <= 5 && hour >= 8 && hour < 18 // Mon-Fri 8AM-6PM
+  }
+
+  const loadLiveFeed = async () => {
+    try {
+      // Use sample data if enabled
+      if (useSampleData) {
+        const sampleFeed = sampleDataService.getSampleLiveFeedItems()
+        setLiveFeedItems(sampleFeed)
+        return
+      }
+
+      const now = new Date()
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      
+      // Get today's events (rolling 24h) as specified
+      const [callsResponse, notificationsResponse] = await Promise.all([
+        fetch(`/api/calls/search?start_date=${todayStart.toISOString()}&limit=50`),
+        fetch(`/api/notifications/recent?limit=20`) // When available
+      ])
+      
+      const callsData = await callsResponse.json()
+      const calls = callsData.success ? callsData.calls || [] : []
+      
+      const feedItems = []
+      
+      // Process calls into feed events
+      for (const call of calls) {
+        // Call started/ended + last transcript snippet (140 chars)
+        if (call.status === 'completed' || call.status === 'answered') {
+          const transcriptSnippet = call.transcript ? 
+            call.transcript.substring(0, 140) + (call.transcript.length > 140 ? '...' : '') : ''
+          
+          feedItems.push({
+            id: `call_${call.id}`,
+            type: 'call_ended',
+            timestamp: new Date(call.end_time || call.created_at),
+            caller: call.caller_name || 'Unknown Caller',
+            phone: call.phone_number,
+            transcript: transcriptSnippet,
+            duration: call.duration ? formatDuration(call.duration) : '',
+            status: getCallStatus(call),
+            callId: call.id
+          })
+        }
+        
+        // Check for appointments booked from AI analysis
+        if (call.ai_response && call.ai_response.appointment_scheduled) {
+          feedItems.push({
+            id: `apt_${call.id}`,
+            type: 'appointment_booked',
+            timestamp: new Date(call.created_at),
+            property: call.ai_response.property_address || 'Property',
+            client: call.caller_name || call.phone_number,
+            appointment_time: call.ai_response.appointment_time || 'TBD',
+            status: 'confirmed',
+            callId: call.id
+          })
+        }
+        
+        // Check for qualified leads
+        if (call.ai_response && call.ai_response.lead_qualified) {
+          feedItems.push({
+            id: `lead_${call.id}`,
+            type: 'lead_qualified',
+            timestamp: new Date(call.created_at),
+            caller: call.caller_name || call.phone_number,
+            score: call.ai_response.lead_quality || 'Medium',
+            criteria: call.ai_response.qualification_reason || 'Met qualification criteria',
+            status: 'qualified',
+            callId: call.id
+          })
+        }
+        
+        // Check for missed calls
+        if (call.status === 'no_answer' || call.status === 'busy') {
+          feedItems.push({
+            id: `missed_${call.id}`,
+            type: 'missed_call',
+            timestamp: new Date(call.created_at),
+            caller: call.caller_name || 'Unknown',
+            phone: call.phone_number,
+            voicemail: call.voicemail_left || false,
+            status: call.voicemail_left ? 'needs_followup' : 'missed',
+            callId: call.id
+          })
+        }
+      }
+      
+      // TODO: Add SMS sent/failed events when notifications API is available
+      
+      // Sort by timestamp (newest first) and limit to 50 items
+      feedItems.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+      setLiveFeedItems(feedItems.slice(0, 50))
+      
+    } catch (error) {
+      console.error('Error loading live feed:', error)
+      // Fallback to sample data
+      const sampleFeed = sampleDataService.getSampleLiveFeedItems()
+      setLiveFeedItems(sampleFeed)
+    }
+  }
+  
+  const formatDuration = (seconds) => {
+    const minutes = Math.floor(seconds / 60)
+    const remainingSeconds = seconds % 60
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`
+  }
+  
+  const getCallStatus = (call) => {
+    if (call.ai_response?.lead_qualified) return 'qualified'
+    if (call.ai_response?.callback_requested) return 'needs_followup'
+    if (call.ai_response?.appointment_scheduled) return 'confirmed'
+    return 'completed'
+  }
+
+  const loadMyQueue = async () => {
+    try {
+      // Use sample data if enabled
+      if (useSampleData) {
+        const sampleQueue = sampleDataService.getSampleQueueItems()
+        setQueueItems(sampleQueue)
+        return
+      }
+
+      // Fetch recent calls that need agent action
+      const callsResponse = await fetch(`/api/calls/recent?limit=50`)
+      const callsData = await callsResponse.json()
+      const calls = callsData.success ? callsData.calls || [] : []
+      
+      const queueItems = []
+      
+      for (const call of calls) {
+        // Skip if already handled by agent
+        if (call.agent_contacted || call.task_closed) continue
+        
+        const callTime = new Date(call.created_at)
+        const minutesSince = (callTime - new Date()) / (1000 * 60)
+        
+        // Confirm/Reschedule showing
+        if (call.ai_response?.appointment_scheduled && !call.ai_response?.appointment_confirmed) {
+          queueItems.push({
+            id: `confirm_${call.id}`,
+            type: 'confirm_showing',
+            title: `Confirm showing at ${call.ai_response.property_address || 'Property'}`,
+            contact: call.caller_name || 'Client',
+            phone: call.phone_number,
+            time: call.ai_response.appointment_time || 'TBD',
+            status: 'open',
+            callId: call.id
+          })
+        }
+        
+        // Call back requests
+        if (call.ai_response?.callback_requested) {
+          queueItems.push({
+            id: `callback_${call.id}`,
+            type: 'call_back',
+            title: `Call back ${call.caller_name || 'caller'}`,
+            contact: call.caller_name || 'Client',
+            phone: call.phone_number,
+            context: call.ai_response.callback_reason || `Interested in ${call.ai_response.property_address || 'properties'}`,
+            status: 'open',
+            callId: call.id
+          })
+        }
+        
+        // Send listings requests
+        if (call.ai_response?.send_listings_requested) {
+          const criteria = []
+          if (call.ai_response.bedrooms) criteria.push(`${call.ai_response.bedrooms}BR`)
+          if (call.ai_response.price_range) criteria.push(`$${call.ai_response.price_range}`)
+          if (call.ai_response.location_preference) criteria.push(call.ai_response.location_preference)
+          
+          queueItems.push({
+            id: `listings_${call.id}`,
+            type: 'send_listings', 
+            title: `Send listings to ${call.caller_name || 'client'}`,
+            contact: call.caller_name || 'Client',
+            phone: call.phone_number,
+            context: criteria.length > 0 ? criteria.join(', ') : 'Custom search criteria',
+            status: 'open',
+            callId: call.id
+          })
+        }
+        
+        // Send recap (for completed calls with significant content)
+        if (call.status === 'completed' && call.transcript && call.transcript.length > 200 && !call.recap_sent) {
+          queueItems.push({
+            id: `recap_${call.id}`,
+            type: 'send_recap',
+            title: `Send recap to ${call.caller_name || 'client'}`,
+            contact: call.caller_name || 'Client', 
+            phone: call.phone_number,
+            context: 'Call summary and next steps',
+            status: 'open',
+            callId: call.id
+          })
+        }
+        
+        // Add note for qualified leads without detailed info
+        if (call.ai_response?.lead_qualified && !call.ai_response?.detailed_notes) {
+          queueItems.push({
+            id: `note_${call.id}`,
+            type: 'add_note',
+            title: `Add notes for ${call.caller_name || 'qualified lead'}`,
+            contact: call.caller_name || 'Lead',
+            phone: call.phone_number,
+            context: 'Document lead preferences and requirements',
+            status: 'open',
+            callId: call.id
+          })
+        }
+      }
+      
+      // Sort by priority (most urgent first) and creation time
+      queueItems.sort((a, b) => {
+        const priorityOrder = { 
+          confirm_showing: 0,
+          call_back: 1, 
+          send_listings: 2,
+          send_recap: 3,
+          add_note: 4
+        }
+        return priorityOrder[a.type] - priorityOrder[b.type]
+      })
+      
+      setQueueItems(queueItems)
+      
+    } catch (error) {
+      console.error('Error loading My Queue:', error)
+      // Fallback to sample data
+      const sampleQueue = sampleDataService.getSampleQueueItems()
+      setQueueItems(sampleQueue)
+    }
+  }
+
+  const setupRealtimeSubscriptions = () => {
+    // Subscribe to calls table changes for <2s realtime updates
+    const callsSubscription = supabase
+      .channel('dashboard-calls')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'calls' },
+        (payload) => {
+          console.log('Realtime call update:', payload)
+          // Immediate updates for different event types
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            // Refresh all data to ensure consistency - optimized for <2s
+            Promise.all([
+              loadLiveFeed(),
+              loadUrgentItems(), 
+              loadMyQueue(),
+              loadKPIData() // Update stats for new calls
+            ])
+
+            // Trigger auto-resolution for new/updated calls with AI responses
+            if (payload.new && payload.new.ai_response) {
+              setTimeout(() => {
+                autoResolutionService.processCallForAutoResolution(payload.new)
+              }, 2000) // Wait 2 seconds after AI analysis is complete
+            }
+          }
+        }
+      )
+      .subscribe()
+
+    // Subscribe to call_transcripts for live transcript updates
+    const transcriptSubscription = supabase
+      .channel('dashboard-transcripts')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'call_transcripts' },
+        (payload) => {
+          console.log('Realtime transcript update:', payload)
+          // Only update live feed for transcript changes
+          loadLiveFeed()
+        }
+      )
+      .subscribe()
+      
+    // Subscribe to notifications/SMS events when available
+    const notificationSubscription = supabase
+      .channel('dashboard-notifications')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        (payload) => {
+          console.log('Realtime notification update:', payload)
+          // Update live feed for SMS sent/failed events
+          loadLiveFeed()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      callsSubscription.unsubscribe()
+      transcriptSubscription.unsubscribe()
+      notificationSubscription.unsubscribe()
+    }
+  }
+
+  const setupAutoResolution = () => {
+    // Process auto-resolution every 30 seconds
+    const interval = setInterval(async () => {
+      try {
+        await autoResolutionService.processPendingCalls()
+      } catch (error) {
+        console.error('Error in auto-resolution processing:', error)
+      }
+    }, 30000) // 30 seconds
+
+    // Also process immediately on mount
+    setTimeout(() => {
+      autoResolutionService.processPendingCalls()
+    }, 5000) // Wait 5 seconds after dashboard load
+
+    return interval
+  }
+
+  const calculateAnsweredRate = (callStats) => {
+    const answered = callStats.answered || 0
+    const total = callStats.total || 0
+    return total > 0 ? Math.round((answered / total) * 100) : 0
+  }
+
+  // Show onboarding for first-time users
+  if (isFirstRun) {
+    return <OnboardingFlow onComplete={() => setIsFirstRun(false)} />
+  }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Welcome Section */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-navy mb-2">
-          Welcome back, {agent?.name || 'Agent'}!
-        </h1>
-        <p className="text-gray-600">
-          Here's what's happening with your properties today.
-        </p>
+    <div className="min-h-screen bg-cream pb-20"> {/* pb-20 for FAB space */}
+      {/* Mobile-First Layout */}
+      <div className="px-4 py-6 space-y-6">
+        {/* KPI Section */}
+        <KPISection 
+          stats={stats}
+          timeRange={timeRange}
+          onTimeRangeChange={setTimeRange}
+          selectedAgents={selectedAgents}
+          onAgentsChange={setSelectedAgents}
+          loading={loading}
+        />
+
+        {/* Urgent Section */}
+        <UrgentSection 
+          items={urgentItems}
+          loading={loading}
+        />
+
+        {/* My Queue Section */}
+        <MyQueue 
+          items={queueItems}
+          loading={loading}
+        />
+
+        {/* Live Feed Section */}
+        <LiveFeed 
+          items={liveFeedItems}
+          loading={loading}
+        />
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <Building className="h-8 w-8 text-coral" />
-            <span className="text-2xl font-bold text-navy">{stats.activeListings}</span>
-          </div>
-          <h3 className="text-sm font-medium text-gray-600">Active Listings</h3>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <Phone className="h-8 w-8 text-coral" />
-            <span className="text-2xl font-bold text-navy">{stats.callsToday}</span>
-          </div>
-          <h3 className="text-sm font-medium text-gray-600">Calls Today</h3>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <Users className="h-8 w-8 text-coral" />
-            <span className="text-2xl font-bold text-navy">{stats.newLeads}</span>
-          </div>
-          <h3 className="text-sm font-medium text-gray-600">New Leads</h3>
-        </div>
-
-        <div className="bg-white rounded-xl p-6 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <TrendingUp className="h-8 w-8 text-coral" />
-            <span className="text-2xl font-bold text-navy">{stats.scheduledShowings}</span>
-          </div>
-          <h3 className="text-sm font-medium text-gray-600">Showings Today</h3>
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="bg-white rounded-xl p-6 shadow-sm mb-8">
-        <h2 className="text-xl font-bold text-navy mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link
-            to="/properties"
-            className="flex items-center justify-between p-4 bg-cream rounded-lg hover:bg-cream-dark transition"
-          >
-            <span className="font-medium text-navy">View Properties</span>
-            <ArrowRight className="h-5 w-5 text-coral" />
-          </Link>
-          
-          <Link
-            to="/calls"
-            className="flex items-center justify-between p-4 bg-cream rounded-lg hover:bg-cream-dark transition"
-          >
-            <span className="font-medium text-navy">Recent Calls</span>
-            <ArrowRight className="h-5 w-5 text-coral" />
-          </Link>
-          
-          <button
-            className="flex items-center justify-between p-4 bg-coral text-white rounded-lg hover:bg-coral-dark transition"
-          >
-            <span className="font-medium">Add Property</span>
-            <ArrowRight className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Recent Activity */}
-      <div className="bg-white rounded-xl p-6 shadow-sm">
-        <h2 className="text-xl font-bold text-navy mb-4">Recent Activity</h2>
-        <div className="space-y-4">
-          <div className="flex items-start">
-            <div className="bg-coral/10 rounded-full p-2 mr-4">
-              <Phone className="h-4 w-4 text-coral" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">
-                New inquiry about 123 Main Street
-              </p>
-              <p className="text-xs text-gray-500">2 minutes ago</p>
-            </div>
-          </div>
-          
-          <div className="flex items-start">
-            <div className="bg-coral/10 rounded-full p-2 mr-4">
-              <Users className="h-4 w-4 text-coral" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">
-                Showing scheduled for Oak Avenue property
-              </p>
-              <p className="text-xs text-gray-500">1 hour ago</p>
-            </div>
-          </div>
-          
-          <div className="flex items-start">
-            <div className="bg-coral/10 rounded-full p-2 mr-4">
-              <Building className="h-4 w-4 text-coral" />
-            </div>
-            <div>
-              <p className="text-sm font-medium text-navy">
-                Price updated for Pine Lane listing
-              </p>
-              <p className="text-xs text-gray-500">3 hours ago</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* CORA Status */}
-      <div className="mt-8 bg-gradient-to-r from-navy to-navy-dark rounded-xl p-6 text-white">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-xl font-bold mb-2">CORA is Active</h3>
-            <p className="text-gray-300">
-              Your AI assistant is answering calls 24/7
-            </p>
-            <p className="text-sm text-gray-400 mt-2">
-              Phone: +1 (316) 867-0416
-            </p>
-          </div>
-          <div className="bg-green-500 h-4 w-4 rounded-full animate-pulse"></div>
-        </div>
-      </div>
+      {/* Voice FAB - Always visible, never blocking */}
+      <VoiceFAB />
     </div>
   )
 }
