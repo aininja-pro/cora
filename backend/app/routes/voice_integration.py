@@ -458,6 +458,85 @@ async def analyze_call(call_id: str) -> Dict[str, Any]:
         logger.error(f"Error analyzing call {call_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to analyze call")
 
+
+@router.post("/calls/{twilio_sid}/trigger-sms")
+async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Trigger SMS notifications for a completed call using Twilio SID.
+    Used when call session is no longer in memory but we need to send SMS.
+    """
+    try:
+        supabase = SupabaseService()
+        
+        # Find the call by Twilio SID
+        call_result = supabase.client.table("calls").select("*").eq("twilio_sid", twilio_sid).single().execute()
+        
+        if not call_result.data:
+            logger.error(f"Call not found for Twilio SID: {twilio_sid}")
+            return {"success": False, "error": "Call not found"}
+        
+        call_data = call_result.data
+        call_id = call_data["id"]
+        caller_number = call_data.get("caller_number")
+        
+        logger.info(f"Triggering SMS for completed call: {call_id} (Twilio: {twilio_sid})")
+        
+        # Get transcript for OpenAI analysis
+        transcript_result = supabase.client.table("call_transcripts").select("*").eq("call_id", call_id).order("sequence_number").execute()
+        transcript_entries = transcript_result.data or []
+        
+        if not transcript_entries:
+            logger.warning(f"No transcript found for call {call_id}, using basic summary")
+            summary = f"Call from {caller_number} - no transcript available for analysis"
+        else:
+            # Run OpenAI analysis to get SMS-optimized summary
+            analysis_service = CallAnalysisService()
+            analysis = await analysis_service.analyze_call_transcript(transcript_entries, call_data)
+            
+            # Use OpenAI's SMS-optimized summary if available
+            summary = analysis.get("sms_summary") if analysis else None
+            
+            if not summary:
+                # Fallback to call_summary if no sms_summary
+                summary = analysis.get("call_summary") if analysis else f"Call from {caller_number} about real estate inquiry"
+        
+        # Ensure summary fits SMS length
+        if len(summary) > 240:
+            summary = summary[:237] + "..."
+        
+        # Send agent summary SMS  
+        try:
+            import requests
+            sms_response = requests.post("http://localhost:8000/api/notifications/sms", json={
+                "tenant_id": "default",  # TODO: Get from call data
+                "to": "+13162187747",  # TODO: Get agent number from tenant
+                "template": "agent_summary", 
+                "payload": {
+                    "call_id": call_id,
+                    "summary": summary,
+                    "actions_link": f"/calls/{call_id}",
+                    "caller_number": caller_number,
+                    "outcome": "completed"
+                },
+                "idempotency_key": f"call_{call_id}_summary_ai"
+            })
+            
+            if sms_response.status_code == 200:
+                logger.info(f"✅ SMS triggered successfully for call {call_id}")
+                return {"success": True, "sms_sent": True, "call_id": call_id}
+            else:
+                logger.error(f"❌ SMS failed for call {call_id}: {sms_response.status_code}")
+                return {"success": True, "sms_sent": False, "error": "SMS failed"}
+                
+        except Exception as sms_error:
+            logger.error(f"❌ SMS error for call {call_id}: {sms_error}")
+            return {"success": True, "sms_sent": False, "error": str(sms_error)}
+        
+    except Exception as e:
+        logger.error(f"Error triggering SMS for call {twilio_sid}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to trigger SMS")
+
+
 # ===== Tool Handlers (Stubs) =====
 
 async def handle_search_properties(args: Dict[str, Any], supabase: SupabaseService, request_id: str) -> ToolEnvelope:

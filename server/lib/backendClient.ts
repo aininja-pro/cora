@@ -291,4 +291,58 @@ export class BackendClient {
       next_actions: nextActions,
     });
   }
+
+  /**
+   * Send SMS notification via backend
+   */
+  async sendSMS(request: {
+    template: string;
+    to: string;
+    payload: Record<string, any>;
+    idempotency_key?: string;
+  }): Promise<{ok: boolean, notification_id?: string, status?: string, error?: string}> {
+    if (!this.jwtToken || !this.tenantId) {
+      console.error("sendSMS: No JWT token or tenant ID available");
+      return { ok: false, error: "No authentication" };
+    }
+
+    const smsRequest = {
+      tenant_id: this.tenantId,
+      to: request.to,
+      template: request.template,
+      payload: request.payload,
+      idempotency_key: request.idempotency_key,
+    };
+
+    try {
+      const response = await fetch(`${this.baseUrl}/api/notifications/sms`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.jwtToken}`,
+        },
+        body: JSON.stringify(smsRequest),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error(`❌ SMS send failed: ${response.status} - ${result.detail || result.error}`);
+        return { 
+          ok: false, 
+          error: result.detail?.message || result.error || `HTTP ${response.status}` 
+        };
+      }
+
+      console.log(`📱 SMS sent successfully: template=${request.template}, id=${result.notification_id}`);
+      return {
+        ok: true,
+        notification_id: result.notification_id,
+        status: result.status,
+      };
+    } catch (error) {
+      console.error("sendSMS exception:", error);
+      return { ok: false, error: String(error) };
+    }
+  }
 }

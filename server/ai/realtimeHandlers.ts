@@ -1,5 +1,6 @@
 // ai/realtimeHandlers.ts
 import { validateArgs, runTool, ToolName, ToolContext, ToolResult } from "./tools";
+import { triggerShowingConfirm } from "./triggers";
 
 /**
  * Minimal Realtime tool-call coordinator.
@@ -20,7 +21,8 @@ const calls = new Map<string, Accum>(); // call_id -> accumulating arg chunks
 export async function handleRealtimeEvent(
   ev: RealtimeEvent,
   send: SendFn,
-  ctx: ToolContext
+  ctx: ToolContext,
+  session?: any // CallSession from mediaBridge
 ) {
   if (ev.type === "response.function_call_arguments.delta") {
     const a = calls.get(ev.call_id) ?? { name: undefined, chunks: [] };
@@ -57,6 +59,12 @@ export async function handleRealtimeEvent(
 
     // 4) run tool
     const result = await runTool(a.name as ToolName, v.data, ctx);
+
+    // 4.5) trigger SMS notifications for successful tool executions
+    if (result.ok && a.name === 'book_showing' && session) {
+      console.log(`📱 Triggering showing confirmation SMS after successful booking`);
+      await triggerShowingConfirm(session, result.data);
+    }
 
     // 5) send function_call_output back + ask model to continue
     return sendFunctionResult(send, ev.call_id, result);

@@ -70,7 +70,8 @@ Provide a JSON response with this exact structure:
   "key_highlights": ["list of 2-3 most important points from call"],
   "next_actions": ["list of suggested follow-up actions"],
   "interest_level": "very_high|high|medium|low - based on engagement",
-  "urgency": "immediate|this_week|this_month|flexible|unknown"
+  "urgency": "immediate|this_week|this_month|flexible|unknown",
+  "sms_summary": "1-2 sentence SMS-optimized summary under 240 chars with key details: intent, outcome, next action"
 }
 
 Lead Quality Guidelines:
@@ -93,12 +94,13 @@ Available properties: 123 Main Street ($489k), 456 Oak Avenue ($325k), 789 Pine 
                 {"role": "user", "content": f"Analyze this real estate call transcript:\n\n{conversation_text}"}
             ]
             
-            # Call GPT-4 for analysis
+            # Call GPT-4 for analysis with timeout
             response = await self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=messages,
                 temperature=0.3,  # Lower temperature for more consistent extraction
-                max_tokens=800
+                max_tokens=800,
+                timeout=15.0  # 15 second timeout
             )
             
             # Parse the JSON response

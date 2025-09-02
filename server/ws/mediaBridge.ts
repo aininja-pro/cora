@@ -19,6 +19,7 @@ import { createRealtimeForCall } from '../lib/realtimeInit';
 import { flushBacklog } from '../lib/transcriptPersistence';
 import { CallCtx, makeCallCtx } from '../lib/callCtx';
 import { wireRealtimeTracer } from '../lib/tracer';
+import { triggerAgentSummary, triggerShowingConfirm } from '../ai/triggers';
 import WebSocket from 'ws';
 
 interface CallSession {
@@ -41,6 +42,7 @@ interface CallSession {
   outputTimer?: NodeJS.Timeout; // 20ms timer for paced audio output
   isAssistantSpeaking: boolean; // Half-duplex flag to prevent feedback
   callCtx?: CallCtx; // Shared context for transcripts
+  isCleanedUp?: boolean; // Idempotency flag for cleanup
 }
 
 const activeCalls = new Map<string, CallSession>();
@@ -511,7 +513,7 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
     };
     
     // Use the new handler for tool-related events
-    await handleRealtimeEvent(message, send, ctx);
+    await handleRealtimeEvent(message, send, ctx, session);
     
     // Handle other events
     switch (message.type) {
@@ -868,8 +870,42 @@ async function initializeCallWithBackend(session: CallSession, startMessage: any
 /**
  * Cleanup call session
  */
-async function cleanupCall(callSid: string): Promise<void> {
+export async function cleanupCall(callSid: string, reason?: string): Promise<void> {
   const session = activeCalls.get(callSid);
+  
+  console.log(`🧹 Cleanup called for ${callSid} (reason: ${reason || 'unknown'})`);
+
+  if (session) {
+    // Idempotency: prevent double cleanup
+    if (session.isCleanedUp) {
+      console.log(`⚠️ Call ${callSid} already cleaned up, skipping (reason: ${reason})`);
+      return;
+    }
+    session.isCleanedUp = true;
+    console.log(`🧹 Cleaning up active call session ${callSid}`);
+  } else {
+    // Call session not in memory - try to trigger SMS from database
+    console.log(`📱 Call ${callSid} not in memory, triggering SMS via database lookup`);
+    
+    try {
+      // Send SMS via backend API directly using the call ID
+      const response = await fetch(`http://localhost:8000/api/calls/${callSid}/trigger-sms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason || 'status-callback' })
+      });
+      
+      if (response.ok) {
+        console.log(`✅ SMS triggered for call ${callSid} via database`);
+      } else {
+        console.log(`⚠️ Failed to trigger SMS for call ${callSid}: ${response.status}`);
+      }
+    } catch (error) {
+      console.log(`❌ Error triggering SMS for call ${callSid}: ${error}`);
+    }
+    return;
+  }
+
   if (session) {
     // Send call end summary and trigger analysis
     if (session.backendClient && session.dbCallId) {
@@ -881,6 +917,9 @@ async function cleanupCall(callSid: string): Promise<void> {
         
         await session.backendClient.addSummary(outcome, summary, nextActions);
         console.log(`📊 [${session.dbCallId}] Call summary sent to backend: ${outcome}`);
+        
+        // Trigger SMS notification to agent
+        await triggerAgentSummary(session, summary, outcome, nextActions);
         
         // Trigger GPT analysis for rich UI (async)
         setTimeout(async () => {

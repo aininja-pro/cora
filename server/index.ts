@@ -37,6 +37,49 @@ app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// Call cleanup endpoint for Twilio status callbacks
+app.post('/cleanup-call', (req, res) => {
+  const { callSid, reason, duration } = req.body;
+  
+  console.log(`🧹 Cleanup request: CallSid=${callSid}, reason=${reason}, duration=${duration}s`);
+  
+  // Import and call the cleanup function
+  const { cleanupCall } = require('./ws/mediaBridge');
+  
+  try {
+    cleanupCall(callSid, reason);
+    console.log(`✅ Call cleanup completed for ${callSid}`);
+    res.json({ ok: true, message: 'Cleanup triggered' });
+  } catch (error) {
+    console.error(`❌ Call cleanup failed for ${callSid}:`, error);
+    res.status(500).json({ ok: false, error: String(error) });
+  }
+});
+
+// Twilio status callback endpoint - triggers call cleanup
+app.post('/twilio/status', express.urlencoded({ extended: true }), (req, res) => {
+  const { CallSid, CallStatus, CallDuration, From, To } = req.body;
+  
+  console.log(`📞 Twilio status: CallSid=${CallSid}, Status=${CallStatus}, Duration=${CallDuration}s`);
+  
+  if (CallStatus === 'completed') {
+    console.log(`✅ Call ${CallSid} completed, triggering cleanup...`);
+    
+    // Import and call the cleanup function directly
+    const { cleanupCall } = require('./ws/mediaBridge');
+    
+    try {
+      cleanupCall(CallSid, 'status-callback');
+      console.log(`✅ Call cleanup completed for ${CallSid} via status callback`);
+    } catch (error) {
+      console.error(`❌ Call cleanup failed for ${CallSid}:`, error);
+    }
+  }
+  
+  // Always return 200 OK to Twilio
+  res.status(200).send('OK');
+});
+
 // Debug route to check paths
 app.get('/debug-paths', (req, res) => {
   const clientPath = path.join(__dirname, '../client');
