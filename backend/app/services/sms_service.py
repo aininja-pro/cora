@@ -28,7 +28,7 @@ class SMSService:
         )
         self.supabase: SupabaseClient = create_client(
             os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_SERVICE_ROLE")  # Will need to add this
+            os.getenv("SUPABASE_KEY")  # Use existing SUPABASE_KEY from environment
         )
         self.default_messaging_sid = os.getenv("TWILIO_MESSAGING_SERVICE_SID")  # Optional
         self.default_phone_number = os.getenv("TWILIO_PHONE_NUMBER")
