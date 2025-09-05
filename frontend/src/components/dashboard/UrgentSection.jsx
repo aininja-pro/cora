@@ -90,12 +90,26 @@ function UrgentSection({ items, loading }) {
 
   return (
     <div className="bg-white rounded-xl p-4 shadow-sm">
-      <div className="flex items-center gap-2 mb-4">
-        <AlertTriangle className="h-5 w-5 text-[#E03131]" />
-        <h2 className="text-lg font-bold text-navy">Urgent</h2>
-        <span className="bg-[#E03131] text-white text-xs px-2 py-1 rounded-full font-medium">
-          {displayItems.filter(item => item.priority === 'urgent').length}
-        </span>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5 text-[#E03131]" />
+          <h2 className="text-lg font-bold text-navy">Urgent</h2>
+          <span className="bg-[#E03131] text-white text-xs px-2 py-1 rounded-full font-medium">
+            {displayItems.filter(item => item.priority === 'urgent').length}
+          </span>
+        </div>
+
+        {/* Batch Actions Bar - when ≥2 routine items */}
+        {displayItems.filter(item => item.priority === 'routine').length >= 2 && (
+          <div className="flex gap-2">
+            <button className="px-3 py-1 bg-[#1971C2] text-white text-xs font-medium rounded hover:opacity-90">
+              Approve All Non-Critical
+            </button>
+            <button className="px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded hover:bg-gray-200">
+              Review Later (30m)
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="space-y-4">

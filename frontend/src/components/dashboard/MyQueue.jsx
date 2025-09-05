@@ -101,6 +101,22 @@ function MyQueue({ items, loading }) {
     setShowUndo(null)
   }
 
+  const handleClearQueue = () => {
+    const itemIds = displayItems.map(item => item.id)
+    setCompletedItems(prev => [...prev, ...itemIds])
+    setShowUndo('all')
+    
+    // Auto-hide undo after 10 seconds
+    setTimeout(() => {
+      setShowUndo(null)
+    }, 10000)
+  }
+
+  const handleUndoAll = () => {
+    setCompletedItems([])
+    setShowUndo(null)
+  }
+
   if (loading) {
     return (
       <div className="bg-white rounded-xl p-4 shadow-sm">
@@ -135,14 +151,26 @@ function MyQueue({ items, loading }) {
             {displayItems.length}
           </span>
         </div>
+
+        {/* Clear My Queue Button */}
+        {displayItems.length > 0 && (
+          <button 
+            onClick={handleClearQueue}
+            className="px-3 py-1 text-sm text-coral hover:text-coral-dark font-medium"
+          >
+            Clear All ({displayItems.length})
+          </button>
+        )}
       </div>
 
       {/* Undo notification */}
       {showUndo && (
         <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between">
-          <span className="text-sm text-green-800">Task completed!</span>
+          <span className="text-sm text-green-800">
+            {showUndo === 'all' ? 'Queue cleared!' : 'Task completed!'}
+          </span>
           <button
-            onClick={() => handleUndo(showUndo)}
+            onClick={() => showUndo === 'all' ? handleUndoAll() : handleUndo(showUndo)}
             className="flex items-center gap-1 text-sm text-green-700 hover:text-green-800"
           >
             <Undo className="h-4 w-4" />

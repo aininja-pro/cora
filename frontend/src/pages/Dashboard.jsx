@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { createClient } from '@supabase/supabase-js'
 
 // Components
-import KPISection from '../components/dashboard/KPISection'
+import SignalBar from '../components/dashboard/SignalBar'
 import UrgentSection from '../components/dashboard/UrgentSection'
 import LiveFeed from '../components/dashboard/LiveFeed'
 import MyQueue from '../components/dashboard/MyQueue'
@@ -36,6 +36,7 @@ function Dashboard() {
   const [queueItems, setQueueItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [useSampleData, setUseSampleData] = useState(false)
+  const [demoMode, setDemoMode] = useState('dashboard') // 'onboarding' or 'dashboard'
 
   useEffect(() => {
     // Get agent info from localStorage
@@ -44,8 +45,21 @@ function Dashboard() {
       setAgent(JSON.parse(agentData))
     }
 
-    // Check if this is first run (no real data exists)
-    checkFirstRun()
+    // Set initial demo mode based on URL or default to dashboard
+    const urlParams = new URLSearchParams(window.location.search)
+    const initialMode = urlParams.get('mode') || 'dashboard'
+    setDemoMode(initialMode)
+    
+    // Set states based on demo mode
+    if (initialMode === 'onboarding') {
+      setIsFirstRun(true)
+      setUseSampleData(false)
+      setLoading(false)
+      return // Don't load dashboard data
+    } else {
+      setIsFirstRun(false)
+      setUseSampleData(true)
+    }
     
     // Load dashboard data
     loadDashboardData()
@@ -74,8 +88,8 @@ function Dashboard() {
       const shouldUseSample = sampleDataService.shouldShowSampleData(hasRealData ? calls.length : 0) && 
                              !sampleDataService.isSampleDataHidden()
       
-      // Force onboarding for demo (remove this line in production)
-      setIsFirstRun(true)
+      // Normal logic: show onboarding only if truly no data
+      setIsFirstRun(!hasRealData && !shouldUseSample)
       setUseSampleData(shouldUseSample)
     } catch (error) {
       console.error('Error checking first run:', error)
@@ -638,36 +652,65 @@ function Dashboard() {
 
   // Show onboarding for first-time users
   if (isFirstRun) {
-    return <OnboardingFlow onComplete={() => setIsFirstRun(false)} />
+    return (
+      <div>
+        <OnboardingFlow onComplete={() => setIsFirstRun(false)} />
+        
+        {/* Demo Navigation */}
+        <div className="fixed bottom-4 left-4 z-40">
+          <button
+            onClick={() => {
+              setDemoMode('dashboard')
+              setIsFirstRun(false)
+              setUseSampleData(true)
+              window.history.pushState({}, '', '/dashboard?mode=dashboard')
+            }}
+            className="px-3 py-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg hover:bg-gray-800"
+          >
+            📊 Demo: Skip to Dashboard
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-cream pb-20"> {/* pb-20 for FAB space */}
       {/* Mobile-First Layout */}
       <div className="px-4 py-6 space-y-6">
-        {/* KPI Section */}
-        <KPISection 
+        {/* Page Header */}
+        <div className="text-center md:text-left">
+          <h1 className="text-2xl font-bold text-navy mb-1">
+            Welcome back, {agent?.name || 'Agent'}!
+          </h1>
+          <p className="text-gray-600 text-sm">
+            Here's what needs your attention right now.
+          </p>
+        </div>
+
+        {/* Signal Bar - Compact metrics */}
+        <SignalBar 
           stats={stats}
           timeRange={timeRange}
           onTimeRangeChange={setTimeRange}
-          selectedAgents={selectedAgents}
-          onAgentsChange={setSelectedAgents}
           loading={loading}
         />
 
-        {/* Urgent Section */}
+        {/* New Layout Order: Urgent → My Queue → Live Feed */}
+        
+        {/* Urgent Section - Most important, shows first */}
         <UrgentSection 
           items={urgentItems}
           loading={loading}
         />
 
-        {/* My Queue Section */}
+        {/* My Queue Section - Actionable items above the fold */}
         <MyQueue 
           items={queueItems}
           loading={loading}
         />
 
-        {/* Live Feed Section */}
+        {/* Live Feed Section - Context and recent activity */}
         <LiveFeed 
           items={liveFeedItems}
           loading={loading}
@@ -676,6 +719,21 @@ function Dashboard() {
 
       {/* Voice FAB - Always visible, never blocking */}
       <VoiceFAB />
+
+      {/* Demo Navigation */}
+      <div className="fixed bottom-4 left-4 z-40">
+        <button
+          onClick={() => {
+            setDemoMode('onboarding')
+            setIsFirstRun(true)
+            setUseSampleData(false)
+            window.history.pushState({}, '', '/dashboard?mode=onboarding')
+          }}
+          className="px-3 py-2 bg-gray-900 text-white text-xs rounded-lg shadow-lg hover:bg-gray-800"
+        >
+          🎯 Demo: Back to Onboarding
+        </button>
+      </div>
     </div>
   )
 }
