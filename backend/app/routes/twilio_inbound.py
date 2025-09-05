@@ -18,7 +18,7 @@ router = APIRouter(prefix="/twilio", tags=["twilio-inbound"])
 # Supabase client for opt-out management
 supabase: SupabaseClient = create_client(
     os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_SERVICE_ROLE")  # Need to add this
+    os.getenv("SUPABASE_KEY")  # Use existing SUPABASE_KEY from environment
 )
 
 
