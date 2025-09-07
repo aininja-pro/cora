@@ -336,6 +336,11 @@ class AutoResolutionService {
   // Process batch of calls (called periodically)
   async processPendingCalls() {
     try {
+      // TEMPORARILY DISABLED: Missing backend endpoint /api/calls/pending-auto-resolution
+      // TODO: Re-enable once backend endpoint is implemented for TextBelt SMS integration
+      console.log('Auto-resolution temporarily disabled - missing backend endpoint')
+      return
+      
       // Get calls with AI responses that haven't been processed for auto-resolution
       const response = await fetch('/api/calls/pending-auto-resolution')
       const data = await response.json()

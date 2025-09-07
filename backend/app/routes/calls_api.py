@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 import logging
-from ..services.supabase_service import SupabaseService
+from ..services.supabase_service import supabase_service
 from ..services.call_analysis_service import CallAnalysisService
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ async def test_database_connection() -> Dict[str, Any]:
     Test database connection and verify tables exist
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Test each table
         tests = {}
@@ -72,7 +72,7 @@ async def get_recent_calls(
     Get recent calls with basic information
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         calls = await supabase.get_recent_calls(limit=limit)
         
         return {
@@ -96,7 +96,7 @@ async def search_calls(
     Search calls with filters
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         calls = await supabase.search_calls(
             phone_number=phone_number,
             status=status,
@@ -120,7 +120,7 @@ async def get_call_details(call_id: str) -> Dict[str, Any]:
     Get detailed call information including transcript and property inquiries
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         call = await supabase.get_call_with_transcript(call_id)
         
         if not call:
@@ -165,7 +165,7 @@ async def analyze_call(call_id: str) -> Dict[str, Any]:
     Analyze a call transcript using GPT-4 to extract insights, contact info, and summary
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         call = await supabase.get_call_with_transcript(call_id)
         
         if not call:
@@ -203,7 +203,7 @@ async def get_call_transcript(call_id: str) -> Dict[str, Any]:
     Get just the transcript for a specific call
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         call = await supabase.get_call_with_transcript(call_id)
         
         if not call:
@@ -229,7 +229,7 @@ async def get_all_leads() -> Dict[str, Any]:
     Get all captured leads
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Get all leads from the database
         response = supabase.client.table("lead_capture").select("*").order("created_at", desc=True).execute()
@@ -277,7 +277,7 @@ async def get_lead_by_phone(phone_number: str) -> Dict[str, Any]:
     Get lead information by phone number
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Get lead by phone number
         response = supabase.client.table("lead_capture").select("*").eq("phone_number", phone_number).execute()
@@ -317,7 +317,7 @@ async def update_lead_status(
         if status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
         
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Update lead status
         response = supabase.client.table("lead_capture").update({
@@ -349,7 +349,7 @@ async def get_property_inquiries(
     Get property inquiries from recent calls
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Calculate date range
         start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
@@ -403,7 +403,7 @@ async def get_dashboard_stats() -> Dict[str, Any]:
     Get dashboard statistics for calls and leads
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Get today's date range
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -482,7 +482,7 @@ async def delete_call(call_id: str) -> Dict[str, Any]:
     Delete a call and all associated data
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Delete the call (cascading deletes will handle transcripts, etc.)
         response = supabase.client.table("calls").delete().eq("id", call_id).execute()
@@ -517,7 +517,7 @@ async def bulk_delete_calls(
         if not call_ids:
             raise HTTPException(status_code=400, detail="No call IDs provided")
         
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Delete all calls in the list
         response = supabase.client.table("calls").delete().in_("id", call_ids).execute()
@@ -542,7 +542,7 @@ async def archive_call(call_id: str) -> Dict[str, Any]:
     Archive a call (mark as archived without deleting)
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Update call status to archived
         response = supabase.client.table("calls").update({

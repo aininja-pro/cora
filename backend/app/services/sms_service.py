@@ -1,16 +1,15 @@
 """
 SMS Service
-Core SMS functionality using Twilio with templates, idempotency, and compliance.
+Core SMS functionality using TextBelt with templates, idempotency, and compliance.
 """
 import os
 import re
 import time
 import asyncio
+import requests
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 import phonenumbers
-from twilio.rest import Client
-from twilio.base.exceptions import TwilioRestException
 import logging
 from supabase import create_client, Client as SupabaseClient
 
@@ -19,26 +18,22 @@ from app.models.notifications import SMSRequest, SMSResponse, NotificationDB
 logger = logging.getLogger(__name__)
 
 class SMSService:
-    """SMS service with Twilio integration, templates, and compliance."""
+    """SMS service with TextBelt integration, templates, and compliance."""
     
     def __init__(self):
-        self.twilio_client = Client(
-            os.getenv("TWILIO_SID"),
-            os.getenv("TWILIO_TOKEN")
-        )
+        self.textbelt_api_key = os.getenv("TEXTBELT_API_KEY")
+        self.textbelt_url = "https://textbelt.com/text"
         self.supabase: SupabaseClient = create_client(
             os.getenv("SUPABASE_URL"),
             os.getenv("SUPABASE_KEY")  # Use existing SUPABASE_KEY from environment
         )
-        self.default_messaging_sid = os.getenv("TWILIO_MESSAGING_SERVICE_SID")  # Optional
-        self.default_phone_number = os.getenv("TWILIO_PHONE_NUMBER")
         
-        # Template definitions (MVP: code-based)
+        # Template definitions (MVP: code-based) - All include compliance "Reply STOP to opt out"
         self.templates = {
-            "showing_confirm": "CORA here ✅ Your showing at {address} is set for {when}. Reply C to confirm, R to reschedule.",
-            "agent_summary": "Summary: {summary}. Actions: {actions_link}",
-            "lead_captured": "New lead: {name}, {phone}, budget {budget}, area {city}. Open: {link}",
-            "missed_call": "You missed a call. Reply CALL to ring back or VISIT to see the transcript: {url}"
+            "showing_confirm": "CORA here ✅ Your showing at {address} is set for {when}. Reply C to confirm, R to reschedule. Reply STOP to opt out.",
+            "agent_summary": "Summary: {summary}. Actions: {actions_link}. Reply STOP to opt out.",
+            "lead_captured": "New lead: {name}, {phone}, budget {budget}, area {city}. Open: {link}. Reply STOP to opt out.",
+            "missed_call": "You missed a call. Reply CALL to ring back or VISIT to see the transcript: {url}. Reply STOP to opt out."
         }
     
     def normalize_phone_number(self, phone: str) -> str:
@@ -69,25 +64,19 @@ class SMSService:
         except KeyError as e:
             raise ValueError(f"Missing template variable: {e}")
     
-    async def check_tenant_sms_enabled(self, tenant_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
-        """Check if SMS is enabled for tenant and get Twilio config."""
+    async def check_tenant_sms_enabled(self, tenant_id: str) -> bool:
+        """Check if SMS is enabled for tenant."""
         try:
-            result = self.supabase.table("tenants").select(
-                "sms_enabled, twilio_messaging_service_sid, sms_default_from"
-            ).eq("id", tenant_id).single().execute()
+            result = self.supabase.table("tenants").select("sms_enabled").eq("id", tenant_id).single().execute()
             
             if not result.data:
-                return False, None, None
+                return False
                 
             tenant = result.data
-            return (
-                tenant.get("sms_enabled", True),
-                tenant.get("twilio_messaging_service_sid"),
-                tenant.get("sms_default_from")
-            )
+            return tenant.get("sms_enabled", True)
         except Exception as e:
             logger.error(f"Failed to check tenant SMS config: {e}")
-            return False, None, None
+            return False
     
     async def check_contact_opt_out(self, phone: str) -> bool:
         """Check if contact has opted out of SMS."""
@@ -166,61 +155,77 @@ class SMSService:
         except Exception as e:
             logger.error(f"Failed to update notification status: {e}")
     
-    async def send_twilio_sms(
+    async def send_textbelt_sms(
         self,
         to_number: str,
-        message: str,
-        messaging_service_sid: Optional[str] = None,
-        from_number: Optional[str] = None
+        message: str
     ) -> Tuple[bool, Optional[str], Optional[str]]:
-        """Send SMS via Twilio with retry logic."""
-        
-        # Determine sending method
-        if messaging_service_sid:
-            send_params = {"messaging_service_sid": messaging_service_sid}
-        elif from_number:
-            send_params = {"from_": from_number}
-        else:
-            send_params = {"messaging_service_sid": self.default_messaging_sid}
+        """Send SMS via TextBelt with retry logic."""
         
         # FOR TESTING: Check if we're in development mode
         if os.getenv("APP_ENV") == "development":
             # Mock SMS sending for testing
-            logger.info(f"📱 [MOCK] SMS would be sent to {to_number[:8]}...")
-            logger.info(f"📱 [MOCK] From: {send_params}")
+            logger.info(f"📱 [MOCK] TextBelt SMS would be sent to {to_number[:8]}...")
             logger.info(f"📱 [MOCK] Message: {message}")
-            mock_sid = f"SM_mock_{int(time.time())}"
-            return True, mock_sid, None
+            mock_id = f"textbelt_mock_{int(time.time())}"
+            return True, mock_id, None
+        
+        if not self.textbelt_api_key:
+            return False, None, "TextBelt API key not configured"
         
         # Retry logic: 3 attempts with exponential backoff
         for attempt in range(3):
             try:
                 start_time = time.time()
                 
-                twilio_message = self.twilio_client.messages.create(
-                    body=message,
-                    to=to_number,
-                    **send_params
+                # TextBelt API payload
+                payload = {
+                    'phone': to_number,
+                    'message': message,
+                    'key': self.textbelt_api_key
+                }
+                
+                response = requests.post(
+                    self.textbelt_url,
+                    data=payload,
+                    timeout=30
                 )
                 
                 duration_ms = int((time.time() - start_time) * 1000)
                 
-                logger.info(f"SMS sent successfully: SID={twilio_message.sid}, duration={duration_ms}ms, to={to_number[:8]}...")
-                
-                return True, twilio_message.sid, None
-                
-            except TwilioRestException as e:
-                error_msg = f"Twilio error: {e.code} - {e.msg}"
-                logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
-                
-                # Don't retry on client errors (400s)
-                if 400 <= e.status < 500:
-                    return False, None, error_msg
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    if result.get('success'):
+                        text_id = result.get('textId', f'textbelt_{int(time.time())}')
+                        quota_remaining = result.get('quotaRemaining', 'unknown')
+                        
+                        logger.info(f"TextBelt SMS sent successfully: textId={text_id}, duration={duration_ms}ms, quota_remaining={quota_remaining}, to={to_number[:8]}...")
+                        
+                        return True, text_id, None
+                    else:
+                        error_msg = result.get('error', 'TextBelt API error')
+                        logger.error(f"TextBelt API error: {error_msg}")
+                        return False, None, f"TextBelt error: {error_msg}"
+                else:
+                    error_msg = f"TextBelt HTTP error: {response.status_code}"
+                    logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
+                    
+                    # Don't retry on client errors (400s)
+                    if 400 <= response.status_code < 500:
+                        return False, None, error_msg
                 
                 # Exponential backoff for server errors
                 if attempt < 2:  # Don't sleep after last attempt
                     wait_time = 0.2 * (4 ** attempt)  # 200ms, 800ms, 2s
                     await asyncio.sleep(wait_time)
+            
+            except requests.exceptions.RequestException as e:
+                error_msg = f"TextBelt request error: {str(e)}"
+                logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
+                
+                if attempt < 2:
+                    await asyncio.sleep(0.2 * (4 ** attempt))
             
             except Exception as e:
                 error_msg = f"Unexpected error: {str(e)}"
@@ -251,7 +256,7 @@ class SMSService:
                     )
             
             # Check tenant SMS enabled
-            sms_enabled, messaging_sid, from_number = await self.check_tenant_sms_enabled(request.tenant_id)
+            sms_enabled = await self.check_tenant_sms_enabled(request.tenant_id)
             if not sms_enabled:
                 return SMSResponse(
                     ok=False,
@@ -283,17 +288,15 @@ class SMSService:
                 idempotency_key=request.idempotency_key
             )
             
-            # Send via Twilio
-            success, message_sid, error = await self.send_twilio_sms(
+            # Send via TextBelt
+            success, message_id, error = await self.send_textbelt_sms(
                 to_number=normalized_phone,
-                message=message,
-                messaging_service_sid=messaging_sid,
-                from_number=from_number
+                message=message
             )
             
             # Update record with result
             if success:
-                await self.update_notification_status(notification_id, "sent", message_sid)
+                await self.update_notification_status(notification_id, "sent", message_id)
                 status = "sent"
             else:
                 await self.update_notification_status(notification_id, "failed", error=error)

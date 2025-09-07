@@ -14,7 +14,7 @@ import time
 import hashlib
 import json
 from pydantic import BaseModel, Field
-from ..services.supabase_service import SupabaseService
+from ..services.supabase_service import supabase_service, SupabaseService
 from ..services.property_search_service import property_search_service, PropertySearchFilter
 from ..services.call_analysis_service import CallAnalysisService
 
@@ -137,7 +137,7 @@ async def create_call(request: CreateCallRequest, req: Request) -> CreateCallRes
     start_time = time.time()
     
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # CRITICAL: Idempotent call creation on twilio_sid
         try:
@@ -277,7 +277,7 @@ async def execute_tool(
         # Rate limiting check (10 req/s per call)
         # TODO: Implement with Redis/memory cache
         
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Route to appropriate tool handler
         result = None
@@ -334,7 +334,7 @@ async def list_calls(
     List calls for UI with pagination
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         query = supabase.client.table("calls").select("*")
         
@@ -365,7 +365,7 @@ async def get_call_detail(call_id: str) -> Dict[str, Any]:
     Get call details including timeline of turns and tool events
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Get call record
         call_result = supabase.client.table("calls").select("*").eq("id", call_id).single().execute()
@@ -402,7 +402,7 @@ async def analyze_call(call_id: str) -> Dict[str, Any]:
     Analyze call transcript and generate rich summary
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         analysis_service = CallAnalysisService()
         
         # Get call transcript from call_transcripts table (fallback)
@@ -466,7 +466,7 @@ async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict
     Used when call session is no longer in memory but we need to send SMS.
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Find the call by Twilio SID
         call_result = supabase.client.table("calls").select("*").eq("twilio_sid", twilio_sid).single().execute()

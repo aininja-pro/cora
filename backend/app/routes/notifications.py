@@ -69,7 +69,7 @@ async def send_test_sms(
     # Skip auth for testing: current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
-    Send test SMS to verify Twilio configuration for a tenant.
+    Send test SMS to verify TextBelt configuration for a tenant.
     
     Development/debugging endpoint to validate SMS setup.
     """
@@ -119,6 +119,7 @@ async def health_check():
     return {
         "service": "sms_notifications",
         "status": "healthy",
-        "twilio_configured": bool(sms_service.twilio_client.account_sid),
+        "provider": "textbelt",
+        "textbelt_configured": bool(sms_service.textbelt_api_key),
         "supabase_configured": bool(os.getenv("SUPABASE_URL"))
     }

@@ -273,7 +273,7 @@ Start with this exact greeting, then wait for the caller:
           input_audio_transcription: { model: "whisper-1", language: "en" },
 
           // VAD tuned for phone pauses
-          turn_detection: { type: "server_vad", silence_duration_ms: 220 },
+          turn_detection: { type: "server_vad", silence_duration_ms: 500 },
           
           voice: voice,
           instructions: instructions,

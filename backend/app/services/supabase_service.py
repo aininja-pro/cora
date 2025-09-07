@@ -380,3 +380,7 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"Error searching calls: {str(e)}")
             raise
+
+
+# Singleton instance to prevent connection exhaustion
+supabase_service = SupabaseService()

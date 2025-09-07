@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 import logging
 from pydantic import BaseModel
-from ..services.supabase_service import SupabaseService
+from ..services.supabase_service import supabase_service
 from ..services.property_search_service import property_search_service, PropertySearchFilter
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def get_all_properties(
     Get all properties with optional status filter
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Build query
         query = supabase.client.table("listings").select("*")
@@ -124,7 +124,7 @@ async def get_property(property_id: str) -> Dict[str, Any]:
     Get a specific property by ID
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         response = supabase.client.table("listings").select("*").eq("id", property_id).execute()
         
@@ -160,7 +160,7 @@ async def create_property(property_data: PropertyCreate) -> Dict[str, Any]:
         if property_data.status not in valid_statuses:
             raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
         
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # For now, use a default agent_id (in production, this would come from authentication)
         # This assumes the demo agent exists from sample_data.sql
@@ -207,7 +207,7 @@ async def update_property(property_id: str, property_data: PropertyUpdate) -> Di
     Update an existing property
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Check if property exists
         existing = supabase.client.table("listings").select("*").eq("id", property_id).execute()
@@ -259,7 +259,7 @@ async def delete_property(property_id: str) -> Dict[str, Any]:
     Delete a property listing
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Check if property exists
         existing = supabase.client.table("listings").select("*").eq("id", property_id).execute()
@@ -288,7 +288,7 @@ async def search_properties_by_address(
     Search properties by address
     """
     try:
-        supabase = SupabaseService()
+        supabase = supabase_service
         
         # Use ilike for case-insensitive partial matching
         response = supabase.client.table("listings").select("*").ilike("address", f"%{query}%").order("created_at", desc=True).limit(limit).execute()
