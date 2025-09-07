@@ -24,11 +24,7 @@ class SMSService:
     def __init__(self):
         self.textbelt_api_key = os.getenv("TEXTBELT_API_KEY")
         self.textbelt_url = "https://textbelt.com/text"
-        from supabase import create_client
-        self.supabase = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_SERVICE_ROLE")
-        )
+        self.supabase = supabase_service.client
         
         # Template definitions (MVP: code-based) - All include compliance "Reply STOP to opt out"
         self.templates = {
