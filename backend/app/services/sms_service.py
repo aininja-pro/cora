@@ -205,9 +205,11 @@ class SMSService:
                 return False, None, error_msg
                 
         except Exception as e:
-            error_msg = f"TextBelt connection error: {str(e)}"
-            logger.error(f"TextBelt SMS failed: {error_msg}")
-            return False, None, error_msg
+            logger.error(f"TextBelt error - ACTUAL: {str(e)}")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return False, None, str(e)
         
         return False, None, "All retry attempts failed"
     
