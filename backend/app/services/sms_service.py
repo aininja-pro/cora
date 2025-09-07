@@ -171,6 +171,8 @@ class SMSService:
         if not self.textbelt_api_key:
             return False, None, "TextBelt API key not configured"
         
+        logger.info(f"Attempting TextBelt SMS to {to_number[:8]}... with {len(message)} char message")
+        
         # Retry logic: 3 attempts with exponential backoff
         for attempt in range(3):
             try:
@@ -183,11 +185,15 @@ class SMSService:
                     'key': self.textbelt_api_key
                 }
                 
-                async with httpx.AsyncClient() as client:
+                logger.info(f"TextBelt attempt {attempt + 1}: Calling {self.textbelt_url}")
+                
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(45.0),
+                    follow_redirects=True
+                ) as client:
                     response = await client.post(
                         self.textbelt_url,
-                        data=payload,
-                        timeout=30.0
+                        data=payload
                     )
                 
                 duration_ms = int((time.time() - start_time) * 1000)
