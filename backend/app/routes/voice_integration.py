@@ -514,7 +514,7 @@ async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict
             loop = asyncio.get_event_loop()
             
             def _send_sms():
-                return requests.post(f"{os.getenv('BACKEND_BASE_URL', 'http://localhost:8000')}/api/notifications/sms", json={
+                return requests.post("https://cora-backend-epv0.onrender.com/api/notifications/sms", json={
                     "tenant_id": "Ray Richards",  # Use actual tenant ID
                     "to": "+13162187747",  # Send to agent (you)
                     "template": "agent_summary", 
