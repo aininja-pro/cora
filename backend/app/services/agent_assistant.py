@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Dict, Any
 from openai import AsyncOpenAI
-from supabase import create_client, Client
+from .supabase_service import supabase_service
 from datetime import datetime, timedelta
 import re
 
@@ -14,10 +14,7 @@ class AgentAssistant:
     
     def __init__(self):
         self.openai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.supabase: Client = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY")
-        )
+        self.supabase = supabase_service.client
     
     async def process_command(self, command: str, agent_id: str) -> Dict[str, Any]:
         """

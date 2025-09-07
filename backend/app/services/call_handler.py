@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Dict, Any, Optional, List
 from openai import AsyncOpenAI
-from supabase import create_client, Client
+from .supabase_service import supabase_service
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -13,10 +13,7 @@ class CallHandler:
     
     def __init__(self):
         self.openai = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.supabase: Client = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY")
-        )
+        self.supabase = supabase_service.client
         
     async def process_caller_message(
         self,

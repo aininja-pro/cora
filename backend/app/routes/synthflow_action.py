@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, Optional
 import logging
-from supabase import create_client
+from ..services.supabase_service import supabase_service
 import os
 import re
 
@@ -9,11 +9,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/synthflow", tags=["synthflow"])
 
-# Initialize Supabase client
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+# Use singleton Supabase client
+supabase = supabase_service.client
 
 @router.post("/action/property-lookup")
 async def property_lookup_action(payload: Dict[str, Any]) -> Dict[str, Any]:

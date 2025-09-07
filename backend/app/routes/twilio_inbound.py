@@ -9,17 +9,14 @@ import logging
 import re
 import asyncio
 import aiohttp
-from supabase import create_client, Client as SupabaseClient
+from ..services.supabase_service import supabase_service
 import os
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/twilio", tags=["twilio-inbound"])
 
-# Supabase client for opt-out management
-supabase: SupabaseClient = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")  # Use existing SUPABASE_KEY from environment
-)
+# Use singleton Supabase client for opt-out management
+supabase = supabase_service.client
 
 
 def normalize_phone_number(phone: str) -> str:

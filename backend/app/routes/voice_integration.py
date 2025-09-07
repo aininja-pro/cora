@@ -234,7 +234,7 @@ async def add_call_event(
     }
 
     # 4) Persist with explicit error handling
-    supabase = SupabaseService()
+    supabase = supabase_service
     try:
         res = supabase.client.table("call_transcripts").insert(payload).execute()
     except Exception as e:
@@ -506,20 +506,21 @@ async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict
         
         # Send agent summary SMS  
         try:
-            import requests
-            sms_response = requests.post("http://localhost:8000/api/notifications/sms", json={
-                "tenant_id": "default",  # TODO: Get from call data
-                "to": "+13162187747",  # TODO: Get agent number from tenant
-                "template": "agent_summary", 
-                "payload": {
-                    "call_id": call_id,
-                    "summary": summary,
-                    "actions_link": f"/calls/{call_id}",
-                    "caller_number": caller_number,
-                    "outcome": "completed"
-                },
-                "idempotency_key": f"call_{call_id}_summary_ai"
-            })
+            import httpx
+            async with httpx.AsyncClient() as client:
+                sms_response = await client.post("http://localhost:8000/api/notifications/sms", json={
+                    "tenant_id": "Ray Richards",  # Use actual tenant ID
+                    "to": "+13162187747",  # Send to agent (you)
+                    "template": "agent_summary", 
+                    "payload": {
+                        "call_id": call_id,
+                        "summary": summary,
+                        "actions_link": f"/calls/{call_id}",
+                        "caller_number": caller_number,
+                        "outcome": "completed"
+                    },
+                    "idempotency_key": f"call_{call_id}_summary_ai"
+                })
             
             if sms_response.status_code == 200:
                 logger.info(f"✅ SMS triggered successfully for call {call_id}")
@@ -539,7 +540,7 @@ async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict
 
 # ===== Tool Handlers (Stubs) =====
 
-async def handle_search_properties(args: Dict[str, Any], supabase: SupabaseService, request_id: str) -> ToolEnvelope:
+async def handle_search_properties(args: Dict[str, Any], supabase, request_id: str) -> ToolEnvelope:
     """Search properties using shared service"""
     try:
         # Convert voice tool args to search filter
@@ -598,7 +599,7 @@ async def handle_search_properties(args: Dict[str, Any], supabase: SupabaseServi
             error=ToolError(code="TOOL_FAILED", message="Property search unavailable", retryable=True)
         )
 
-async def handle_book_showing(args: Dict[str, Any], supabase: SupabaseService, tenant_id: str, request_id: str, idempotency_key: Optional[str]) -> ToolEnvelope:
+async def handle_book_showing(args: Dict[str, Any], supabase, tenant_id: str, request_id: str, idempotency_key: Optional[str]) -> ToolEnvelope:
     """Book property showing with idempotency"""
     try:
         # Validate required fields
@@ -655,7 +656,7 @@ async def handle_book_showing(args: Dict[str, Any], supabase: SupabaseService, t
             error=ToolError(code="TOOL_FAILED", message="Booking system unavailable", retryable=True)
         )
 
-async def handle_qualify_lead(args: Dict[str, Any], supabase: SupabaseService, call_id: str, request_id: str) -> ToolEnvelope:
+async def handle_qualify_lead(args: Dict[str, Any], supabase, call_id: str, request_id: str) -> ToolEnvelope:
     """Qualify potential lead and create/update lead record"""
     try:
         # Calculate lead score based on qualification answers
@@ -710,7 +711,7 @@ async def handle_qualify_lead(args: Dict[str, Any], supabase: SupabaseService, c
             error=ToolError(code="TOOL_FAILED", message="Lead qualification unavailable", retryable=True)
         )
 
-async def handle_request_callback(args: Dict[str, Any], supabase: SupabaseService, tenant_id: str, request_id: str, idempotency_key: Optional[str]) -> ToolEnvelope:
+async def handle_request_callback(args: Dict[str, Any], supabase, tenant_id: str, request_id: str, idempotency_key: Optional[str]) -> ToolEnvelope:
     """Schedule callback request with SMS trigger"""
     try:
         # Validate phone number
@@ -757,7 +758,7 @@ async def handle_request_callback(args: Dict[str, Any], supabase: SupabaseServic
             error=ToolError(code="TOOL_FAILED", message="Callback system unavailable", retryable=True)
         )
 
-async def handle_transfer_to_human(args: Dict[str, Any], supabase: SupabaseService, request_id: str) -> ToolEnvelope:
+async def handle_transfer_to_human(args: Dict[str, Any], supabase, request_id: str) -> ToolEnvelope:
     """Transfer call to human agent via Twilio"""
     try:
         queue = args.get("queue", "primary_agent")

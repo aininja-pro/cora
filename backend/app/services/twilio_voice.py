@@ -11,7 +11,7 @@ from datetime import datetime
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
 import asyncio
-from supabase import create_client
+from .supabase_service import supabase_service
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +33,7 @@ class TwilioVoiceService:
             self.client = None
         
         # Supabase for database
-        self.supabase = create_client(
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY")
-        )
+        self.supabase = supabase_service.client
         
         # Store active calls
         self.active_calls = {}

@@ -10,7 +10,7 @@ from datetime import datetime
 import json
 import re
 from typing import Optional, Dict, Any, List
-from ..services.supabase_service import SupabaseService
+from ..services.supabase_service import supabase_service
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class CallSession:
         self.properties_discussed = set()
         self.lead_info = {}
         try:
-            self.supabase = SupabaseService()
+            self.supabase = supabase_service
         except Exception as e:
             logger.error(f"Failed to initialize Supabase service: {str(e)}")
             self.supabase = None

@@ -3,17 +3,14 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
 from datetime import datetime
-from supabase import create_client, Client
+from ..services.supabase_service import supabase_service
 from ..deps.auth import get_current_agent
 from ..services.agent_assistant import AgentAssistant
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
-# Initialize Supabase client
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+# Use singleton Supabase client
+supabase = supabase_service.client
 
 class VoiceCommandRequest(BaseModel):
     command: str

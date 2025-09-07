@@ -6,7 +6,7 @@ Single source of truth for property queries with validation and pagination
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, validator
 import logging
-from .supabase_service import SupabaseService
+from .supabase_service import supabase_service
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class PropertySearchService:
     """Shared property search service"""
     
     def __init__(self):
-        self.supabase = SupabaseService()
+        self.supabase = supabase_service
     
     async def search(self, filter: PropertySearchFilter, request_id: str = "unknown") -> PropertySearchResult:
         """

@@ -6,12 +6,13 @@ import os
 import re
 import time
 import asyncio
-import requests
+import httpx
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 import phonenumbers
 import logging
-from supabase import create_client, Client as SupabaseClient
+from supabase import Client as SupabaseClient
+from .supabase_service import supabase_service
 
 from app.models.notifications import SMSRequest, SMSResponse, NotificationDB
 
@@ -23,9 +24,10 @@ class SMSService:
     def __init__(self):
         self.textbelt_api_key = os.getenv("TEXTBELT_API_KEY")
         self.textbelt_url = "https://textbelt.com/text"
-        self.supabase: SupabaseClient = create_client(
+        from supabase import create_client
+        self.supabase = create_client(
             os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_KEY")  # Use existing SUPABASE_KEY from environment
+            os.getenv("SUPABASE_SERVICE_ROLE")
         )
         
         # Template definitions (MVP: code-based) - All include compliance "Reply STOP to opt out"
@@ -185,11 +187,12 @@ class SMSService:
                     'key': self.textbelt_api_key
                 }
                 
-                response = requests.post(
-                    self.textbelt_url,
-                    data=payload,
-                    timeout=30
-                )
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        self.textbelt_url,
+                        data=payload,
+                        timeout=30.0
+                    )
                 
                 duration_ms = int((time.time() - start_time) * 1000)
                 
@@ -220,7 +223,7 @@ class SMSService:
                     wait_time = 0.2 * (4 ** attempt)  # 200ms, 800ms, 2s
                     await asyncio.sleep(wait_time)
             
-            except requests.exceptions.RequestException as e:
+            except httpx.RequestError as e:
                 error_msg = f"TextBelt request error: {str(e)}"
                 logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
                 

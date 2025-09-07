@@ -1,18 +1,15 @@
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, List
 import logging
-from supabase import create_client
+from ..services.supabase_service import supabase_service
 import os
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/synthflow", tags=["synthflow"])
 
-# Initialize Supabase client
-supabase = create_client(
-    os.getenv("SUPABASE_URL"),
-    os.getenv("SUPABASE_KEY")
-)
+# Use singleton Supabase client
+supabase = supabase_service.client
 
 @router.post("/properties/list")
 async def list_all_properties(payload: Dict[str, Any] = {}) -> Dict[str, Any]:

@@ -106,8 +106,8 @@ async def websocket_endpoint(websocket: WebSocket):
         
         # Try to save call info if database is available
         try:
-            from ..services.supabase_service import SupabaseService
-            db = SupabaseService()
+            from ..services.supabase_service import supabase_service
+            db = supabase_service
             logger.info("Database service initialized for call tracking")
         except Exception as e:
             logger.warning(f"Database not available for call tracking: {e}")
