@@ -16,7 +16,7 @@ class SupabaseService:
     def __init__(self):
         """Initialize Supabase client"""
         supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
+        supabase_key = os.getenv("SUPABASE_SERVICE_ROLE") or os.getenv("SUPABASE_KEY")
         
         logger.info(f"Initializing Supabase client - URL: {supabase_url[:30]}..." if supabase_url else "No URL")
         
