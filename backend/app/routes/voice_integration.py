@@ -504,11 +504,17 @@ async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict
         if len(summary) > 240:
             summary = summary[:237] + "..."
         
-        # Send agent summary SMS  
+        # Send agent summary SMS using requests (working approach)
         try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                sms_response = await client.post("http://localhost:8000/api/notifications/sms", json={
+            import requests
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            executor = ThreadPoolExecutor(max_workers=1)
+            loop = asyncio.get_event_loop()
+            
+            def _send_sms():
+                return requests.post(f"{os.getenv('BACKEND_BASE_URL', 'http://localhost:8000')}/api/notifications/sms", json={
                     "tenant_id": "Ray Richards",  # Use actual tenant ID
                     "to": "+13162187747",  # Send to agent (you)
                     "template": "agent_summary", 
@@ -520,7 +526,9 @@ async def trigger_sms_for_call(twilio_sid: str, request: Dict[str, Any]) -> Dict
                         "outcome": "completed"
                     },
                     "idempotency_key": f"call_{call_id}_summary_ai"
-                })
+                }, timeout=30)
+            
+            sms_response = await loop.run_in_executor(executor, _send_sms)
             
             if sms_response.status_code == 200:
                 logger.info(f"✅ SMS triggered successfully for call {call_id}")
