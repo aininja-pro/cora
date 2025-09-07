@@ -26,7 +26,11 @@ class SMSService:
         self.executor = ThreadPoolExecutor(max_workers=3)
         self.textbelt_api_key = os.getenv("TEXTBELT_API_KEY")
         self.textbelt_url = "https://textbelt.com/text"
-        self.supabase = supabase_service.client
+        from supabase import create_client
+        self.supabase = create_client(
+            os.getenv("SUPABASE_URL"),
+            os.getenv("SUPABASE_SERVICE_ROLE") or os.getenv("SUPABASE_KEY")
+        )
         
         # Template definitions (MVP: code-based) - All include compliance "Reply STOP to opt out"
         self.templates = {
