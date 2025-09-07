@@ -7,6 +7,9 @@ import re
 import time
 import asyncio
 import httpx
+import urllib.request
+import urllib.parse
+import json
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 import phonenumbers
@@ -179,22 +182,46 @@ class SMSService:
                 start_time = time.time()
                 
                 # TextBelt API payload
+                # Use test mode to check connectivity first
                 payload = {
                     'phone': to_number,
                     'message': message,
-                    'key': self.textbelt_api_key
+                    'key': f"{self.textbelt_api_key}_test"  # Test mode for debugging
                 }
                 
                 logger.info(f"TextBelt attempt {attempt + 1}: Calling {self.textbelt_url}")
                 
-                async with httpx.AsyncClient(
-                    timeout=httpx.Timeout(45.0),
-                    follow_redirects=True
-                ) as client:
-                    response = await client.post(
-                        self.textbelt_url,
-                        data=payload
-                    )
+                # Try urllib first (more compatible with Render)
+                try:
+                    data = urllib.parse.urlencode(payload).encode('utf-8')
+                    req = urllib.request.Request(self.textbelt_url, data=data, method='POST')
+                    
+                    with urllib.request.urlopen(req, timeout=30) as response:
+                        result = json.loads(response.read().decode('utf-8'))
+                        
+                        if result.get('success'):
+                            text_id = result.get('textId', f'textbelt_{int(time.time())}')
+                            quota_remaining = result.get('quotaRemaining', 'unknown')
+                            
+                            logger.info(f"TextBelt SMS sent successfully: textId={text_id}, quota_remaining={quota_remaining}, to={to_number[:8]}...")
+                            return True, text_id, None
+                        else:
+                            error_msg = result.get('error', 'TextBelt API error')
+                            logger.error(f"TextBelt API error: {error_msg}")
+                            return False, None, f"TextBelt error: {error_msg}"
+                
+                except Exception as urllib_error:
+                    logger.warning(f"urllib failed, trying httpx: {urllib_error}")
+                    
+                    # Fallback to httpx
+                    async with httpx.AsyncClient(
+                        timeout=httpx.Timeout(45.0),
+                        follow_redirects=True
+                    ) as client:
+                        response = await client.post(
+                            self.textbelt_url,
+                            data=payload
+                        )
                 
                 duration_ms = int((time.time() - start_time) * 1000)
                 
