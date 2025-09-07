@@ -6,10 +6,8 @@ import os
 import re
 import time
 import asyncio
-import httpx
-import urllib.request
-import urllib.parse
-import json
+import requests
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional, Tuple
 from datetime import datetime
 import phonenumbers
@@ -25,6 +23,7 @@ class SMSService:
     """SMS service with TextBelt integration, templates, and compliance."""
     
     def __init__(self):
+        self.executor = ThreadPoolExecutor(max_workers=3)
         self.textbelt_api_key = os.getenv("TEXTBELT_API_KEY")
         self.textbelt_url = "https://textbelt.com/text"
         self.supabase = supabase_service.client
@@ -176,95 +175,39 @@ class SMSService:
         
         logger.info(f"Attempting TextBelt SMS to {to_number[:8]}... with {len(message)} char message")
         
-        # Retry logic: 3 attempts with exponential backoff
-        for attempt in range(3):
-            try:
-                start_time = time.time()
+        # Use requests with ThreadPoolExecutor - TextBelt's documented approach
+        def _send_textbelt_sync():
+            return requests.post(self.textbelt_url, {
+                'phone': to_number,
+                'message': message,
+                'key': self.textbelt_api_key
+            }, timeout=30)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(self.executor, _send_textbelt_sync)
+            
+            if response.status_code == 200:
+                result = response.json()
                 
-                # TextBelt API payload
-                # Use test mode to check connectivity first
-                payload = {
-                    'phone': to_number,
-                    'message': message,
-                    'key': f"{self.textbelt_api_key}_test"  # Test mode for debugging
-                }
-                
-                logger.info(f"TextBelt attempt {attempt + 1}: Calling {self.textbelt_url}")
-                
-                # Try urllib first (more compatible with Render)
-                try:
-                    data = urllib.parse.urlencode(payload).encode('utf-8')
-                    req = urllib.request.Request(self.textbelt_url, data=data, method='POST')
+                if result.get('success'):
+                    text_id = result.get('textId', f'textbelt_{int(time.time())}')
+                    quota_remaining = result.get('quotaRemaining', 'unknown')
                     
-                    with urllib.request.urlopen(req, timeout=30) as response:
-                        result = json.loads(response.read().decode('utf-8'))
-                        
-                        if result.get('success'):
-                            text_id = result.get('textId', f'textbelt_{int(time.time())}')
-                            quota_remaining = result.get('quotaRemaining', 'unknown')
-                            
-                            logger.info(f"TextBelt SMS sent successfully: textId={text_id}, quota_remaining={quota_remaining}, to={to_number[:8]}...")
-                            return True, text_id, None
-                        else:
-                            error_msg = result.get('error', 'TextBelt API error')
-                            logger.error(f"TextBelt API error: {error_msg}")
-                            return False, None, f"TextBelt error: {error_msg}"
-                
-                except Exception as urllib_error:
-                    logger.warning(f"urllib failed, trying httpx: {urllib_error}")
-                    
-                    # Fallback to httpx
-                    async with httpx.AsyncClient(
-                        timeout=httpx.Timeout(45.0),
-                        follow_redirects=True
-                    ) as client:
-                        response = await client.post(
-                            self.textbelt_url,
-                            data=payload
-                        )
-                
-                duration_ms = int((time.time() - start_time) * 1000)
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    if result.get('success'):
-                        text_id = result.get('textId', f'textbelt_{int(time.time())}')
-                        quota_remaining = result.get('quotaRemaining', 'unknown')
-                        
-                        logger.info(f"TextBelt SMS sent successfully: textId={text_id}, duration={duration_ms}ms, quota_remaining={quota_remaining}, to={to_number[:8]}...")
-                        
-                        return True, text_id, None
-                    else:
-                        error_msg = result.get('error', 'TextBelt API error')
-                        logger.error(f"TextBelt API error: {error_msg}")
-                        return False, None, f"TextBelt error: {error_msg}"
+                    logger.info(f"TextBelt SMS sent successfully: textId={text_id}, quota_remaining={quota_remaining}, to={to_number[:8]}...")
+                    return True, text_id, None
                 else:
-                    error_msg = f"TextBelt HTTP error: {response.status_code}"
-                    logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
-                    
-                    # Don't retry on client errors (400s)
-                    if 400 <= response.status_code < 500:
-                        return False, None, error_msg
+                    error_msg = result.get('error', 'TextBelt API error')
+                    logger.error(f"TextBelt API error: {error_msg}")
+                    return False, None, f"TextBelt error: {error_msg}"
+            else:
+                error_msg = f"TextBelt HTTP error: {response.status_code}"
+                return False, None, error_msg
                 
-                # Exponential backoff for server errors
-                if attempt < 2:  # Don't sleep after last attempt
-                    wait_time = 0.2 * (4 ** attempt)  # 200ms, 800ms, 2s
-                    await asyncio.sleep(wait_time)
-            
-            except httpx.RequestError as e:
-                error_msg = f"TextBelt request error: {str(e)}"
-                logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
-                
-                if attempt < 2:
-                    await asyncio.sleep(0.2 * (4 ** attempt))
-            
-            except Exception as e:
-                error_msg = f"Unexpected error: {str(e)}"
-                logger.error(f"SMS send attempt {attempt + 1} failed: {error_msg}")
-                
-                if attempt < 2:
-                    await asyncio.sleep(0.2 * (4 ** attempt))
+        except Exception as e:
+            error_msg = f"TextBelt connection error: {str(e)}"
+            logger.error(f"TextBelt SMS failed: {error_msg}")
+            return False, None, error_msg
         
         return False, None, "All retry attempts failed"
     
