@@ -21,6 +21,8 @@ import { CallCtx, makeCallCtx } from '../lib/callCtx';
 import { wireRealtimeTracer } from '../lib/tracer';
 import { triggerAgentSummary, triggerShowingConfirm } from '../ai/triggers';
 import WebSocket from 'ws';
+import { Worker } from 'worker_threads';
+import * as path from 'path';
 
 interface CallSession {
   callSid: string;
@@ -43,6 +45,26 @@ interface CallSession {
   isAssistantSpeaking: boolean; // Half-duplex flag to prevent feedback
   callCtx?: CallCtx; // Shared context for transcripts
   isCleanedUp?: boolean; // Idempotency flag for cleanup
+  
+  // Professional audio buffering system
+  audioAggregator: Buffer; // Accumulates deltas before frame slicing
+  carrryoverBytes: Buffer; // Holds incomplete frames
+  isAudioSending: boolean; // Tracks if timer is actively sending
+  audioStartTime?: bigint; // Monotonic start time for deterministic scheduling
+  framesSentCount: number; // Total frames sent for this TTS segment
+  
+  // Buffer management metrics
+  underrunCount: number;
+  queueDepthHistory: number[];
+  lastQueueCheck: number;
+  
+  // Water mark thresholds (in frames)
+  readonly HIGH_WATER_FRAMES: number; // 480ms = 24 frames
+  readonly LOW_WATER_FRAMES: number;  // 240ms = 12 frames
+  readonly MIN_BUFFER_FRAMES: number; // 240ms = 12 frames minimum before sending
+  
+  // Worker thread for GC-isolated audio pacing
+  audioWorker?: Worker;
 }
 
 const activeCalls = new Map<string, CallSession>();
@@ -174,7 +196,26 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
           bytesSinceCommit: 0, // Not used with server_vad but keeping for debugging
           outgoingQueue: [],
           outputTimer: undefined,
-          isAssistantSpeaking: false
+          isAssistantSpeaking: false,
+          
+          // Professional audio buffering initialization
+          audioAggregator: Buffer.alloc(0),
+          carrryoverBytes: Buffer.alloc(0),
+          isAudioSending: false,
+          framesSentCount: 0,
+          
+          // Buffer metrics
+          underrunCount: 0,
+          queueDepthHistory: [],
+          lastQueueCheck: Date.now(),
+          
+          // Water mark constants
+          HIGH_WATER_FRAMES: 24, // 480ms
+          LOW_WATER_FRAMES: 12,  // 240ms  
+          MIN_BUFFER_FRAMES: 12, // 240ms minimum
+          
+          // Worker will be initialized when audio starts
+          audioWorker: undefined
         };
         
         activeCalls.set(callSid, session);
@@ -525,18 +566,33 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
         
       case 'response.audio.delta':
         console.log(`🔊 CORA speaking: ${message.delta ? 'audio data' : 'no data'}`);
-        // Fix #5: Half-duplex gating - start blocking input on first audio delta
+        
+        // Reset barge-in flag when new TTS starts (allows fresh interruption)
         if (!session.isAssistantSpeaking) {
           session.isAssistantSpeaking = true;
-          console.log(`🔇 Pausing input audio processing (assistant speaking)`);
+          session.hasBargein = false; // Reset for this TTS segment
+          console.log(`🔇 TTS STARTED: Pausing input, reset barge-in flag`);
         }
+        
         handleOutgoingAudio(session, message);
         break;
         
       case 'response.audio.done':
         console.log(`✅ CORA finished speaking`);
         session.isAssistantSpeaking = false;
-        console.log(`🎤 RESUMING INPUT - caller can now be heard again`);
+        session.hasBargein = false; // Reset barge-in state for next interaction
+        
+        // Stop audio sender if still running (end of TTS segment)
+        if (session.isAudioSending && session.outgoingQueue.length === 0) {
+          console.log(`🔚 TTS DONE: Stopping audio sender (queue empty)`);
+          if (session.audioWorker) {
+            stopWorkerBasedAudioSender(session);
+          } else {
+            stopDeterministicAudioSender(session);
+          }
+        }
+        
+        console.log(`🎤 INPUT RESUMED: Caller can speak again (barge-in reset)`);
         recordFirstAudio(session.callSid);
         break;
         
@@ -615,7 +671,7 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
         
       case 'input_audio_buffer.speech_started':
         console.log(`🗣️ [${session.dbCallId}] BARGE-IN: Caller started speaking - halting CORA output`);
-        handleBargeIn(session);
+        handleBargeinWithGating(session);
         
         // CRITICAL: Force stop assistant speaking immediately
         if (session.isAssistantSpeaking) {
@@ -638,7 +694,7 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
 }
 
 /**
- * Handle outgoing audio from OpenAI (PCM16 16kHz -> μ-law 8kHz)
+ * Professional audio buffering: Aggregate deltas → exact 160-byte frames → pre-buffer → deterministic send
  */
 function handleOutgoingAudio(session: CallSession, message: any): void {
   try {
@@ -649,119 +705,384 @@ function handleOutgoingAudio(session: CallSession, message: any): void {
       return;
     }
     
-    console.log(`🎵 Processing CORA audio: ${b64.length} chars base64`);
+    // STEP 1: Aggregate all deltas into single buffer
+    const incomingData = Buffer.from(b64, 'base64');
+    session.audioAggregator = Buffer.concat([session.audioAggregator, incomingData]);
     
-    // CRITICAL: OpenAI now sends μ-law directly (no conversion needed)
-    const mulawData = Buffer.from(b64, 'base64');
-    console.log(`🔄 Received μ-law: ${mulawData.length} bytes`);
+    console.log(`🎵 Aggregated ${incomingData.length} bytes (total: ${session.audioAggregator.length})`);
     
-    // Log first few bytes for debugging
-    console.log(`🔍 μ-law first 8 bytes: ${mulawData.subarray(0, 8).toString('hex')}`);
+    // STEP 2: Slice into exact 160-byte frames with carryover
+    const totalBytes = session.carrryoverBytes.length + session.audioAggregator.length;
+    const combinedBuffer = Buffer.concat([session.carrryoverBytes, session.audioAggregator]);
     
-    // Break into 160-byte frames (20ms each) and queue them
-    for (let i = 0; i < mulawData.length; i += 160) {
-      const frame = mulawData.subarray(i, i + 160);
-      if (frame.length === 160) { // Only queue complete frames
-        session.outgoingQueue.push(frame);
-      }
+    const completeFrames = Math.floor(totalBytes / 160);
+    const newFramesData = combinedBuffer.subarray(0, completeFrames * 160);
+    session.carrryoverBytes = combinedBuffer.subarray(completeFrames * 160); // Save remainder
+    
+    // Queue the complete frames
+    for (let i = 0; i < newFramesData.length; i += 160) {
+      const frame = newFramesData.subarray(i, i + 160);
+      session.outgoingQueue.push(frame);
     }
     
-    console.log(`📦 Queued ${Math.floor(mulawData.length / 160)} frames (160 bytes each)`);
+    // Clear aggregator after processing
+    session.audioAggregator = Buffer.alloc(0);
     
-    // CRITICAL: Send clear event before new audio (prevent feedback)
-    if (session.outgoingQueue.length === Math.floor(mulawData.length / 160)) {
-      console.log('🧹 Clearing Twilio outbound track before CORA speaks');
+    const currentQueueFrames = session.outgoingQueue.length;
+    const queueMs = currentQueueFrames * 20;
+    
+    console.log(`📦 Added ${completeFrames} frames | Queue: ${currentQueueFrames} frames (${queueMs}ms) | Carryover: ${session.carrryoverBytes.length}b`);
+    
+    // STEP 3: Clear Twilio track on first audio (prevent feedback)
+    if (!session.isAudioSending && currentQueueFrames > 0) {
+      console.log('🧹 Clearing Twilio outbound track before TTS');
       session.twilioWs.send(JSON.stringify({
         event: 'clear',
         streamSid: session.streamSid,
         track: 'outbound'
       }));
-      
-      // Send mark after queuing ~0.5s of audio to verify playback
-      if (session.outgoingQueue.length >= 25) { // 25 frames = 500ms
-        const markId = `mark_${Date.now()}`;
-        console.log(`📍 Sending playback mark: ${markId}`);
-        session.twilioWs.send(JSON.stringify({
-          event: 'mark',
-          streamSid: session.streamSid,
-          mark: { name: markId }
-        }));
-      }
     }
     
-    // Start the output timer if not already running
-    if (!session.outputTimer) {
-      startOutputTimer(session);
+    // STEP 4: Pre-buffer check - don't start sending until MIN_BUFFER_FRAMES queued
+    if (!session.isAudioSending && currentQueueFrames >= session.MIN_BUFFER_FRAMES) {
+      console.log(`🚀 PRE-BUFFER COMPLETE: Starting worker-based sender with ${currentQueueFrames} frames (${queueMs}ms buffered)`);
+      startWorkerBasedAudioSender(session);
+      
+      // Send playback verification mark
+      const markId = `prebuffer_${Date.now()}`;
+      session.twilioWs.send(JSON.stringify({
+        event: 'mark',
+        streamSid: session.streamSid,
+        mark: { name: markId }
+      }));
+    } else if (currentQueueFrames < session.MIN_BUFFER_FRAMES) {
+      console.log(`⏳ BUFFERING: ${currentQueueFrames}/${session.MIN_BUFFER_FRAMES} frames (need ${session.MIN_BUFFER_FRAMES - currentQueueFrames} more)`);
+    }
+    
+    // STEP 5: High-water mark check (back-pressure)
+    if (currentQueueFrames > session.HIGH_WATER_FRAMES) {
+      console.warn(`🌊 HIGH WATER: ${currentQueueFrames} frames (${queueMs}ms) > ${session.HIGH_WATER_FRAMES * 20}ms limit`);
     }
     
   } catch (error) {
-    console.error(`❌ Error processing outgoing audio:`, error);
+    console.error(`❌ Error in professional audio handling:`, error);
   }
 }
 
 /**
- * Start 20ms timer to send queued audio frames to Twilio
+ * Deterministic 20ms audio sender with monotonic clock and catch-up logic
+ * Never lets Twilio starve - maintains steady 50fps even under GC pressure
  */
-function startOutputTimer(session: CallSession): void {
-  let framesSent = 0;
+function startDeterministicAudioSender(session: CallSession): void {
+  if (session.isAudioSending) {
+    console.log(`⚠️ Audio sender already running for call ${session.callSid}`);
+    return;
+  }
+  
+  session.isAudioSending = true;
+  session.audioStartTime = process.hrtime.bigint();
+  session.framesSentCount = 0;
+  
+  let framesSentThisSecond = 0;
   let lastSecond = Math.floor(Date.now() / 1000);
+  let underrunThisCall = 0;
+  
+  console.log(`🎯 DETERMINISTIC SENDER: Started with monotonic clock`);
   
   session.outputTimer = setInterval(() => {
-    const frame = session.outgoingQueue.shift();
-    if (!frame) return; // No frames to send
+    const currentTime = process.hrtime.bigint();
+    const elapsedNs = currentTime - session.audioStartTime!;
+    const elapsedMs = Number(elapsedNs / BigInt(1000000)); // Convert to milliseconds
     
-    // Fix #6: Exact 160-byte μ-law frame format
-    if (frame.length !== 160) {
-      console.warn(`⚠️ Frame size mismatch: ${frame.length} bytes (expected 160)`);
-      return;
+    // Calculate how many frames SHOULD have been sent by now (50fps = 20ms intervals)
+    const expectedFrames = Math.floor(elapsedMs / 20);
+    const framesBehind = expectedFrames - session.framesSentCount;
+    
+    // Catch-up logic: send multiple frames if we're behind (GC hiccups, etc.)
+    const framesToSend = Math.min(framesBehind + 1, 3); // Max 3 frames per tick to avoid overwhelming
+    
+    for (let i = 0; i < framesToSend; i++) {
+      const frame = session.outgoingQueue.shift();
+      if (!frame) {
+        // UNDERRUN: queue is empty but we need to send
+        underrunThisCall++;
+        session.underrunCount++;
+        console.warn(`🚨 UNDERRUN #${underrunThisCall}: No frame available at ${elapsedMs}ms (expected frame ${expectedFrames})`);
+        break;
+      }
+      
+      // Validate frame size
+      if (frame.length !== 160) {
+        console.error(`💥 CRITICAL: Frame size ${frame.length} ≠ 160 bytes`);
+        continue;
+      }
+      
+      // Send to Twilio
+      const payload = frame.toString('base64');
+      const twilioFrame = {
+        event: 'media',
+        streamSid: session.streamSid,
+        media: { payload }
+      };
+      
+      session.twilioWs.send(JSON.stringify(twilioFrame));
+      session.framesSentCount++;
+      framesSentThisSecond++;
     }
     
-    const payload = frame.toString('base64');
-    // CRITICAL: Minimal Twilio frame (ChatGPT spec - no extra fields)
-    const twilioFrame = {
-      event: 'media',
-      streamSid: session.streamSid,
-      media: {
-        payload: payload
-      }
-    };
-    
-    framesSent++;
+    // Queue depth monitoring and metrics
     const currentSecond = Math.floor(Date.now() / 1000);
+    const queueFrames = session.outgoingQueue.length;
+    const queueMs = queueFrames * 20;
     
-    // CRITICAL: Outbound diagnostics (ChatGPT spec - queue depth, fps, μ-law bytes)
+    // Log metrics every second
     if (currentSecond !== lastSecond) {
-      const queueDepth = session.outgoingQueue.length;
-      const first8Hex = frame.subarray(0, 8).toString('hex');
-      console.log(`📊 Outbound: ${framesSent} frames/sec, queue: ${queueDepth}, first8: ${first8Hex}`);
-      framesSent = 0;
+      // Track queue depth history
+      session.queueDepthHistory.push(queueMs);
+      if (session.queueDepthHistory.length > 10) {
+        session.queueDepthHistory.shift(); // Keep last 10 seconds
+      }
+      
+      const avgQueueMs = session.queueDepthHistory.reduce((a, b) => a + b, 0) / session.queueDepthHistory.length;
+      const driftMs = elapsedMs - (session.framesSentCount * 20);
+      
+      console.log(`📊 AUDIO METRICS: ${framesSentThisSecond}fps | Queue: ${queueMs}ms | Avg: ${avgQueueMs.toFixed(0)}ms | Drift: ${driftMs.toFixed(1)}ms | Underruns: ${underrunThisCall}`);
+      
+      framesSentThisSecond = 0;
       lastSecond = currentSecond;
     }
     
-    session.twilioWs.send(JSON.stringify(twilioFrame));
+    // Stop condition: low water mark reached and no more audio coming
+    if (queueFrames <= session.LOW_WATER_FRAMES && !session.isAssistantSpeaking) {
+      console.log(`🔚 LOW WATER REACHED: Stopping sender (${queueFrames} frames remaining)`);
+      stopDeterministicAudioSender(session);
+    }
     
-  }, 20); // Send one frame every 20ms
+  }, 10); // Check every 10ms (twice as fast as frame rate for precision)
 }
 
 /**
- * Handle barge-in (caller interrupts assistant)
+ * Worker-based audio sender with GC isolation
  */
-function handleBargeIn(session: CallSession): void {
+function startWorkerBasedAudioSender(session: CallSession): void {
+  if (session.isAudioSending) {
+    console.log(`⚠️ Worker audio sender already running for call ${session.callSid}`);
+    return;
+  }
+  
+  // Create worker thread for deterministic pacing
+  const workerPath = path.join(__dirname, '../workers/audioWorker.js');
+  session.audioWorker = new Worker(workerPath);
+  session.isAudioSending = true;
+  session.framesSentCount = 0;
+  
+  console.log(`🧑‍💻 WORKER SENDER: Starting GC-isolated audio pacing`);
+  
+  // Handle worker messages
+  session.audioWorker.on('message', (message) => {
+    switch (message.type) {
+      case 'frame_request':
+        handleWorkerFrameRequest(session, message);
+        break;
+        
+      case 'metrics':
+        handleWorkerMetrics(session, message);
+        break;
+        
+      case 'started':
+        console.log(`✅ WORKER: Audio pacing started for call ${session.callSid}`);
+        break;
+        
+      case 'stopped':
+        console.log(`🏁 WORKER: Stopped - ${message.totalFrames} frames, ${message.totalUnderruns} underruns`);
+        break;
+        
+      case 'error':
+        console.error(`❌ WORKER ERROR: ${message.message}`);
+        break;
+    }
+  });
+  
+  session.audioWorker.on('error', (error) => {
+    console.error(`❌ WORKER THREAD ERROR: ${error}`);
+    stopWorkerBasedAudioSender(session);
+  });
+  
+  session.audioWorker.on('exit', (code) => {
+    if (code !== 0) {
+      console.error(`❌ WORKER THREAD EXITED: code ${code}`);
+    }
+    session.audioWorker = undefined;
+  });
+  
+  // Start the worker pacing
+  session.audioWorker.postMessage({ type: 'start' });
+}
+
+/**
+ * Handle frame requests from the worker thread
+ */
+function handleWorkerFrameRequest(session: CallSession, request: any): void {
+  const { count, elapsedMs, expectedFrame } = request;
+  
+  for (let i = 0; i < count; i++) {
+    const frame = session.outgoingQueue.shift();
+    if (!frame) {
+      // UNDERRUN: queue is empty but worker needs frames
+      session.underrunCount++;
+      session.audioWorker?.postMessage({ type: 'underrun' });
+      console.warn(`🚨 WORKER UNDERRUN: No frame at ${elapsedMs}ms (expected ${expectedFrame})`);
+      break;
+    }
+    
+    // Validate frame size
+    if (frame.length !== 160) {
+      console.error(`💥 WORKER: Invalid frame size ${frame.length} ≠ 160 bytes`);
+      continue;
+    }
+    
+    // Send to Twilio
+    const payload = frame.toString('base64');
+    const twilioFrame = {
+      event: 'media',
+      streamSid: session.streamSid,
+      media: { payload }
+    };
+    
+    session.twilioWs.send(JSON.stringify(twilioFrame));
+    session.framesSentCount++;
+    
+    // Notify worker that frame was sent
+    session.audioWorker?.postMessage({ type: 'frame_sent' });
+  }
+  
+  // Check for stop condition
+  const queueFrames = session.outgoingQueue.length;
+  if (queueFrames <= session.LOW_WATER_FRAMES && !session.isAssistantSpeaking) {
+    console.log(`🔚 WORKER: Low water reached, stopping sender (${queueFrames} frames remaining)`);
+    stopWorkerBasedAudioSender(session);
+  }
+}
+
+/**
+ * Handle metrics from the worker thread
+ */
+function handleWorkerMetrics(session: CallSession, metrics: any): void {
+  const queueFrames = session.outgoingQueue.length;
+  const queueMs = queueFrames * 20;
+  
+  // Update queue depth history
+  session.queueDepthHistory.push(queueMs);
+  if (session.queueDepthHistory.length > 10) {
+    session.queueDepthHistory.shift();
+  }
+  
+  const avgQueueMs = session.queueDepthHistory.reduce((a, b) => a + b, 0) / session.queueDepthHistory.length;
+  
+  console.log(`📊 WORKER METRICS: ${metrics.fps}fps | Queue: ${queueMs}ms | Avg: ${avgQueueMs.toFixed(0)}ms | Underruns: ${metrics.underruns}`);
+}
+
+/**
+ * Stop the worker-based audio sender
+ */
+function stopWorkerBasedAudioSender(session: CallSession): void {
+  if (session.audioWorker) {
+    session.audioWorker.postMessage({ type: 'stop' });
+    session.audioWorker.terminate();
+    session.audioWorker = undefined;
+  }
+  
+  session.isAudioSending = false;
+  
+  const finalQueueFrames = session.outgoingQueue.length;
+  const finalQueueMs = finalQueueFrames * 20;
+  
+  console.log(`🏁 WORKER SENDER STOPPED: ${session.framesSentCount} frames sent, ${finalQueueMs}ms remaining`);
+}
+
+/**
+ * Stop the deterministic audio sender and reset state (fallback/legacy)
+ */
+function stopDeterministicAudioSender(session: CallSession): void {
+  // Try worker-based sender first
+  if (session.audioWorker) {
+    stopWorkerBasedAudioSender(session);
+    return;
+  }
+  
+  // Fallback to old timer-based approach
+  if (session.outputTimer) {
+    clearInterval(session.outputTimer);
+    session.outputTimer = undefined;
+  }
+  
+  session.isAudioSending = false;
+  
+  const finalQueueFrames = session.outgoingQueue.length;
+  const finalQueueMs = finalQueueFrames * 20;
+  
+  console.log(`🏁 LEGACY SENDER STOPPED: ${session.framesSentCount} frames sent, ${finalQueueMs}ms remaining, ${session.underrunCount} total underruns`);
+}
+
+/**
+ * Legacy timer function - keeping for compatibility but not used
+ */
+function startOutputTimer(session: CallSession): void {
+  console.log(`⚠️ Using legacy timer - consider upgrading to deterministic sender`);
+  startDeterministicAudioSender(session);
+}
+
+/**
+ * Professional barge-in handling with proper gating to prevent audio artifacts
+ */
+function handleBargeinWithGating(session: CallSession): void {
   if (!session.hasBargein) {
-    console.log(`🗣️ [${session.dbCallId}] Barge-in detected for call ${session.callSid}`);
+    console.log(`🗣️ [${session.dbCallId}] BARGE-IN: Detected for call ${session.callSid}`);
     session.hasBargein = true;
     
-    // Clear any queued assistant audio
+    // STEP 1: Immediately stop the audio sender (worker-based or legacy) to prevent buffer conflicts
+    if (session.isAudioSending) {
+      console.log(`⏹️ BARGE-IN: Stopping audio sender`);
+      if (session.audioWorker) {
+        stopWorkerBasedAudioSender(session);
+      } else {
+        stopDeterministicAudioSender(session);
+      }
+    }
+    
+    // STEP 2: Clear Twilio's outbound track with proper stream targeting
+    console.log(`🧹 BARGE-IN: Clearing Twilio outbound track`);
     session.twilioWs.send(JSON.stringify({
-      event: 'clear'
+      event: 'clear',
+      streamSid: session.streamSid,
+      track: 'outbound'
     }));
     
-    // Stream barge-in event to backend
+    // STEP 3: Flush our queue to prevent stale audio from playing later
+    const flushedFrames = session.outgoingQueue.length;
+    const flushedMs = flushedFrames * 20;
+    session.outgoingQueue.length = 0; // Clear queue
+    session.audioAggregator = Buffer.alloc(0); // Clear aggregator
+    session.carrryoverBytes = Buffer.alloc(0); // Clear carryover
+    
+    console.log(`🗑️ BARGE-IN: Flushed ${flushedFrames} queued frames (${flushedMs}ms of audio)`);
+    
+    // STEP 4: Send mark to confirm clearing worked
+    const clearMarkId = `bargein_clear_${Date.now()}`;
+    session.twilioWs.send(JSON.stringify({
+      event: 'mark',
+      streamSid: session.streamSid,
+      mark: { name: clearMarkId }
+    }));
+    
+    // STEP 5: Stream barge-in event to backend for analytics
     if (session.backendClient) {
       try {
         session.backendClient.addStatus("barge_in", {
           twilio_sid: session.callSid,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          flushed_frames: flushedFrames,
+          flushed_ms: flushedMs
         });
         console.log(`📝 [${session.dbCallId}] Barge-in event streamed to backend`);
       } catch (error) {
@@ -769,8 +1090,18 @@ function handleBargeIn(session: CallSession): void {
       }
     }
     
-    console.log(`🗣️ Barge-in detected - server_vad will handle buffer automatically`);
+    console.log(`🎤 BARGE-IN: Clean transition complete - caller has the floor`);
+  } else {
+    console.log(`⚠️ BARGE-IN: Already in barge-in state, ignoring duplicate event`);
   }
+}
+
+/**
+ * Legacy barge-in handler - keeping for compatibility
+ */
+function handleBargeIn(session: CallSession): void {
+  console.log(`⚠️ Using legacy barge-in handler - consider upgrading to gated version`);
+  handleBargeinWithGating(session);
 }
 
 /**
@@ -943,12 +1274,26 @@ export async function cleanupCall(callSid: string, reason?: string): Promise<voi
       }
     }
     
-    // Stop output timer and clear queue
-    if (session.outputTimer) {
-      clearInterval(session.outputTimer);
-      session.outputTimer = undefined;
+    // Stop audio sender (worker-based or legacy) and clear all buffers
+    if (session.isAudioSending) {
+      console.log(`🔚 CLEANUP: Stopping audio sender`);
+      if (session.audioWorker) {
+        stopWorkerBasedAudioSender(session);
+      } else {
+        stopDeterministicAudioSender(session);
+      }
     }
+    
+    // Clear all audio buffers completely
     session.outgoingQueue.length = 0;
+    session.audioAggregator = Buffer.alloc(0);
+    session.carrryoverBytes = Buffer.alloc(0);
+    
+    // Log final audio metrics
+    const avgQueueMs = session.queueDepthHistory.length > 0 
+      ? session.queueDepthHistory.reduce((a, b) => a + b, 0) / session.queueDepthHistory.length
+      : 0;
+    console.log(`📊 FINAL AUDIO METRICS: ${session.framesSentCount} frames sent, ${session.underrunCount} underruns, avg queue: ${avgQueueMs.toFixed(0)}ms`);
     
     // Close Realtime connection
     if (session.realtimeWs) {
