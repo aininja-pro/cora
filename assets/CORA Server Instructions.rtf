@@ -1,0 +1,82 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0  CORA Production Setup & TextBelt SMS Integration - Summary\
+\
+  Production Architecture\
+\
+  - Voice Server: Local (port 3000) with ngrok tunnel \uc0\u8594  connects to production backend\
+  - Backend: Render.com deployment (https://cora-backend-epv0.onrender.com)\
+  - Frontend: Local (port 5173) \uc0\u8594  connects to production backend\
+  - SMS Provider: TextBelt (migrated from Twilio SMS)\
+\
+  Required Environment Variables in Render\
+\
+  TEXTBELT_API_KEY=b57829043a7c7c916f4e1c3d43cab431b46651dcftfEuuCexVRtF1v5aHWRAUBLk\
+  SUPABASE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmeHV\
+  6c2NrcGNyemdia253eWZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwNjk4NTEsImV4cCI6MjA2OTY0NTg1MX0.\
+  TdEGrlG0lAaWQmwPixMuHjDJU-YTR6TeO2WPk-u_yZs\
+  SUPABASE_SERVICE_ROLE=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZi\
+  I6ImlmeHV6c2NrcGNyemdia253eWZyIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NDA2OTg1MSwiZXh\
+  wIjoyMDY5NjQ1ODUxfQ.56WwnO3HHqRcSNmrrReuAaXFq0gR35K4_mzRUp0k58Q\
+  SUPABASE_URL=https://ifxuzsckpcrzgbknwyfr.supabase.co\
+\
+  Local Configuration Files\
+\
+  /server/.env:\
+  BACKEND_BASE_URL=https://cora-backend-epv0.onrender.com\
+\
+  /frontend/src/config.js:\
+  export const API_URL = 'https://cora-backend-epv0.onrender.com'\
+\
+  /backend/.env:\
+  APP_ENV=development  # (local only - production auto-detects)\
+\
+  Startup Sequence\
+\
+  1. Voice Server: cd server && npm run dev (port 3000 + ngrok)\
+  2. Frontend: cd frontend && npm run dev (port 5173)\
+  3. Backend: Auto-deploys via GitHub \uc0\u8594  Render\
+\
+  Testing SMS Flow\
+\
+  1. Call: +1-316-867-0416\
+  2. Expected: SMS sent to +1-316-218-7747 after call ends\
+  3. Check: Render logs for TextBelt SMS sent successfully\
+\
+  Critical Issues Solved\
+\
+  - Backend Stability: Fixed synchronous HTTP calls blocking FastAPI event loop\
+  - Connection Pool: Implemented Supabase singleton pattern across all services\
+  - TextBelt Integration: Using requests + ThreadPoolExecutor (their documented approach)\
+  - Production URLs: Fixed hardcoded localhost references for production deployment\
+\
+  Key Success Indicators\
+\
+  - Render logs show: TextBelt SMS sent successfully: textId=..., quota_remaining=198\
+  - Agent receives SMS with call summary and actions link\
+  - No more "All connection attempts failed" errors\
+  - Backend stays responsive after calls (no spinning wheels in frontend)\
+\
+  If Servers Need Restart\
+\
+  Voice Server (most common issue):\
+  # Kill and restart voice server\
+  lsof -ti :3000 | xargs kill -9\
+  cd /Users/richardrierson/Desktop/Projects/CORA/server && npm run dev\
+\
+  Frontend:\
+  # Usually auto-reloads, but if needed:\
+  cd /Users/richardrierson/Desktop/Projects/CORA/frontend && npm run dev\
+\
+  Backend: Auto-deploys via Render (no manual restart needed)\
+\
+  TextBelt Migration Status: \uc0\u9989  COMPLETE\
+\
+  - Voice calls: Twilio (unchanged)\
+  - SMS notifications: TextBelt (working in production)\
+  - 198 SMS credits remaining}

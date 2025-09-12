@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { MapPin, Bed, Bath, Square, DollarSign, Phone, Plus, X, Edit, Trash2, Image } from 'lucide-react'
+import { API_URL } from '../config.js'
 
 function Properties() {
   const [properties, setProperties] = useState([])
@@ -30,7 +31,7 @@ function Properties() {
     try {
       setLoading(true)
       setError(null)
-      const response = await fetch('http://localhost:8000/api/properties/')
+      const response = await fetch(`${API_URL}/api/properties/`)
       const data = await response.json()
       
       if (data.success) {
@@ -60,7 +61,7 @@ function Properties() {
         sqft: parseInt(formData.sqft)
       }
 
-      const response = await fetch('http://localhost:8000/api/properties/', {
+      const response = await fetch(`${API_URL}/api/properties/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -101,7 +102,7 @@ function Properties() {
         sqft: parseInt(formData.sqft)
       }
 
-      const response = await fetch(`http://localhost:8000/api/properties/${editingProperty.id}`, {
+      const response = await fetch(`${API_URL}/api/properties/${editingProperty.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -132,7 +133,7 @@ function Properties() {
     if (!confirm('Are you sure you want to delete this property?')) return
 
     try {
-      const response = await fetch(`http://localhost:8000/api/properties/${propertyId}`, {
+      const response = await fetch(`${API_URL}/api/properties/${propertyId}`, {
         method: 'DELETE'
       })
 

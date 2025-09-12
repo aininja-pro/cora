@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Phone, Clock, User, MessageSquare, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronUp, Bot, Calendar, MapPin, DollarSign, Home, Trash2 } from 'lucide-react'
+import { API_URL } from '../config.js'
 
 function CallsSimple() {
   const [calls, setCalls] = useState([])
@@ -21,7 +22,7 @@ function CallsSimple() {
       setError(null)
       
       console.log('Fetching calls from backend...')
-      const response = await fetch('http://localhost:8000/api/calls?tenant_id=Ray%20Richards')
+      const response = await fetch(`${API_URL}/api/calls?tenant_id=Ray%20Richards`)
       
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
@@ -242,7 +243,7 @@ function CallsSimple() {
       setAnalyzingCall(callId);
       console.log(`Generating analysis for call ${callId}`);
       
-      const analysisResponse = await fetch(`http://localhost:8000/api/calls/${callId}/analyze`);
+      const analysisResponse = await fetch(`${API_URL}/api/calls/${callId}/analyze`);
       
       if (analysisResponse.ok) {
         const analysisData = await analysisResponse.json();
@@ -273,7 +274,7 @@ function CallsSimple() {
 
     try {
       console.log(`Deleting call ${callId}`);
-      const response = await fetch(`http://localhost:8000/api/calls/${callId}`, {
+      const response = await fetch(`${API_URL}/api/calls/${callId}`, {
         method: 'DELETE'
       });
 
@@ -329,7 +330,7 @@ function CallsSimple() {
     setBulkDeleting(true);
     
     try {
-      const response = await fetch('http://localhost:8000/api/calls/bulk-delete', {
+      const response = await fetch(`${API_URL}/api/calls/bulk-delete`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -383,8 +384,8 @@ function CallsSimple() {
         
         // Fetch both call details and transcript data
         const [callResponse, transcriptResponse] = await Promise.all([
-          fetch(`http://localhost:8000/api/calls/${call.id}`),
-          fetch(`http://localhost:8000/api/calls/${call.id}/transcript`)
+          fetch(`${API_URL}/api/calls/${call.id}`),
+          fetch(`${API_URL}/api/calls/${call.id}/transcript`)
         ])
         
         if (callResponse.ok && transcriptResponse.ok) {

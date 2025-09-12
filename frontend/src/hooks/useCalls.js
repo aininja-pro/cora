@@ -5,7 +5,8 @@ const supabaseUrl = 'https://ifxuzsckpcrzgbknwyfr.supabase.co'
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlmeHV6c2NrcGNyemdia253eWZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwNjk4NTEsImV4cCI6MjA2OTY0NTg1MX0.TdEGrlG0lAaWQmwPixMuHjDJU-YTR6TeO2WPk-u_yZs'
 const supabase = createClient(supabaseUrl, supabaseKey)
 
-const BACKEND_BASE_URL = 'http://localhost:8000'
+import { API_URL } from '../config.js'
+const BACKEND_BASE_URL = API_URL
 
 /**
  * Hook for managing calls list with live updates

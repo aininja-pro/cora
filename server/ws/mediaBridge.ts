@@ -889,7 +889,7 @@ export async function cleanupCall(callSid: string, reason?: string): Promise<voi
     
     try {
       // Send SMS via backend API directly using the call ID
-      const response = await fetch(`http://localhost:8000/api/calls/${callSid}/trigger-sms`, {
+      const response = await fetch(`${process.env.BACKEND_BASE_URL}/api/calls/${callSid}/trigger-sms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: reason || 'status-callback' })

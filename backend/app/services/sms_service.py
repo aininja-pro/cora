@@ -35,7 +35,7 @@ class SMSService:
         # Template definitions (MVP: code-based) - All include compliance "Reply STOP to opt out"
         self.templates = {
             "showing_confirm": "CORA here ✅ Your showing at {address} is set for {when}. Reply C to confirm, R to reschedule. Reply STOP to opt out.",
-            "agent_summary": "Summary: {summary}. Actions: {actions_link}. Reply STOP to opt out.",
+            "agent_summary": "Summary: {summary}. Reply STOP to opt out.",
             "lead_captured": "New lead: {name}, {phone}, budget {budget}, area {city}. Open: {link}. Reply STOP to opt out.",
             "missed_call": "You missed a call. Reply CALL to ring back or VISIT to see the transcript: {url}. Reply STOP to opt out."
         }
