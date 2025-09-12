@@ -43,6 +43,21 @@ interface CallSession {
   isAssistantSpeaking: boolean; // Half-duplex flag to prevent feedback
   callCtx?: CallCtx; // Shared context for transcripts
   isCleanedUp?: boolean; // Idempotency flag for cleanup
+  
+  // Professional audio buffering system
+  audioAggregator: Buffer; // Accumulates deltas before frame slicing
+  carryoverBytes: Buffer; // Holds incomplete frames
+  isAudioSending: boolean; // Tracks if timer is actively sending
+  framesSentCount: number; // Total frames sent for this TTS segment
+  
+  // Buffer management metrics
+  underrunCount: number;
+  queueDepthHistory: number[];
+  
+  // Water mark thresholds (in frames)
+  readonly HIGH_WATER_FRAMES: number; // 480ms = 24 frames
+  readonly LOW_WATER_FRAMES: number;  // 240ms = 12 frames
+  readonly MIN_BUFFER_FRAMES: number; // 240ms = 12 frames minimum
 }
 
 const activeCalls = new Map<string, CallSession>();
@@ -174,7 +189,22 @@ export function handleMediaStream(ws: WebSocket, req: IncomingMessage): void {
           bytesSinceCommit: 0, // Not used with server_vad but keeping for debugging
           outgoingQueue: [],
           outputTimer: undefined,
-          isAssistantSpeaking: false
+          isAssistantSpeaking: false,
+          
+          // Professional audio buffering initialization
+          audioAggregator: Buffer.alloc(0),
+          carryoverBytes: Buffer.alloc(0),
+          isAudioSending: false,
+          framesSentCount: 0,
+          
+          // Buffer metrics
+          underrunCount: 0,
+          queueDepthHistory: [],
+          
+          // Water mark constants
+          HIGH_WATER_FRAMES: 24, // 480ms
+          LOW_WATER_FRAMES: 12,  // 240ms  
+          MIN_BUFFER_FRAMES: 12  // 240ms minimum
         };
         
         activeCalls.set(callSid, session);
@@ -638,7 +668,7 @@ async function handleRealtimeMessage(session: CallSession, data: Buffer): Promis
 }
 
 /**
- * Handle outgoing audio from OpenAI (PCM16 16kHz -> μ-law 8kHz)
+ * Professional audio buffering: Aggregate deltas → exact 160-byte frames → pre-buffer → deterministic send
  */
 function handleOutgoingAudio(session: CallSession, message: any): void {
   try {
@@ -649,53 +679,67 @@ function handleOutgoingAudio(session: CallSession, message: any): void {
       return;
     }
     
-    console.log(`🎵 Processing CORA audio: ${b64.length} chars base64`);
+    // STEP 1: Aggregate all deltas into single buffer
+    const incomingData = Buffer.from(b64, 'base64');
+    session.audioAggregator = Buffer.concat([session.audioAggregator, incomingData]);
     
-    // CRITICAL: OpenAI now sends μ-law directly (no conversion needed)
-    const mulawData = Buffer.from(b64, 'base64');
-    console.log(`🔄 Received μ-law: ${mulawData.length} bytes`);
+    console.log(`🎵 Aggregated ${incomingData.length} bytes (total: ${session.audioAggregator.length})`);
     
-    // Log first few bytes for debugging
-    console.log(`🔍 μ-law first 8 bytes: ${mulawData.subarray(0, 8).toString('hex')}`);
+    // STEP 2: Slice into exact 160-byte frames with carryover
+    const totalBytes = session.carryoverBytes.length + session.audioAggregator.length;
+    const combinedBuffer = Buffer.concat([session.carryoverBytes, session.audioAggregator]);
     
-    // Break into 160-byte frames (20ms each) and queue them
-    for (let i = 0; i < mulawData.length; i += 160) {
-      const frame = mulawData.subarray(i, i + 160);
-      if (frame.length === 160) { // Only queue complete frames
-        session.outgoingQueue.push(frame);
-      }
+    const completeFrames = Math.floor(totalBytes / 160);
+    const newFramesData = combinedBuffer.subarray(0, completeFrames * 160);
+    session.carryoverBytes = combinedBuffer.subarray(completeFrames * 160); // Save remainder
+    
+    // Queue the complete frames
+    for (let i = 0; i < newFramesData.length; i += 160) {
+      const frame = newFramesData.subarray(i, i + 160);
+      session.outgoingQueue.push(frame);
     }
     
-    console.log(`📦 Queued ${Math.floor(mulawData.length / 160)} frames (160 bytes each)`);
+    // Clear aggregator after processing
+    session.audioAggregator = Buffer.alloc(0);
     
-    // CRITICAL: Send clear event before new audio (prevent feedback)
-    if (session.outgoingQueue.length === Math.floor(mulawData.length / 160)) {
-      console.log('🧹 Clearing Twilio outbound track before CORA speaks');
+    const currentQueueFrames = session.outgoingQueue.length;
+    const queueMs = currentQueueFrames * 20;
+    
+    console.log(`📦 Added ${completeFrames} frames | Queue: ${currentQueueFrames} frames (${queueMs}ms) | Carryover: ${session.carryoverBytes.length}b`);
+    
+    // STEP 3: Clear Twilio track on first audio (prevent feedback)
+    if (!session.isAudioSending && currentQueueFrames > 0) {
+      console.log('🧹 Clearing Twilio outbound track before TTS');
       session.twilioWs.send(JSON.stringify({
         event: 'clear',
         streamSid: session.streamSid,
         track: 'outbound'
       }));
-      
-      // Send mark after queuing ~0.5s of audio to verify playback
-      if (session.outgoingQueue.length >= 25) { // 25 frames = 500ms
-        const markId = `mark_${Date.now()}`;
-        console.log(`📍 Sending playback mark: ${markId}`);
-        session.twilioWs.send(JSON.stringify({
-          event: 'mark',
-          streamSid: session.streamSid,
-          mark: { name: markId }
-        }));
-      }
     }
     
-    // Start the output timer if not already running
-    if (!session.outputTimer) {
-      startOutputTimer(session);
+    // STEP 4: Pre-buffer check - start sending when we have enough frames
+    if (!session.isAudioSending && currentQueueFrames >= session.MIN_BUFFER_FRAMES) {
+      console.log(`🚀 PRE-BUFFER COMPLETE: Starting deterministic sender with ${currentQueueFrames} frames (${queueMs}ms buffered)`);
+      startDeterministicAudioSender(session);
+      
+      // Send playback verification mark
+      const markId = `prebuffer_${Date.now()}`;
+      session.twilioWs.send(JSON.stringify({
+        event: 'mark',
+        streamSid: session.streamSid,
+        mark: { name: markId }
+      }));
+    } else if (currentQueueFrames < session.MIN_BUFFER_FRAMES && currentQueueFrames > 0) {
+      console.log(`⏳ BUFFERING: ${currentQueueFrames}/${session.MIN_BUFFER_FRAMES} frames (need ${session.MIN_BUFFER_FRAMES - currentQueueFrames} more)`);
+    }
+    
+    // STEP 5: High-water mark check (back-pressure)
+    if (currentQueueFrames > session.HIGH_WATER_FRAMES) {
+      console.warn(`🌊 HIGH WATER: ${currentQueueFrames} frames (${queueMs}ms) > ${session.HIGH_WATER_FRAMES * 20}ms limit`);
     }
     
   } catch (error) {
-    console.error(`❌ Error processing outgoing audio:`, error);
+    console.error(`❌ Error in professional audio handling:`, error);
   }
 }
 
@@ -741,6 +785,114 @@ function startOutputTimer(session: CallSession): void {
     session.twilioWs.send(JSON.stringify(twilioFrame));
     
   }, 20); // Send one frame every 20ms
+}
+
+/**
+ * Deterministic 20ms audio sender with monotonic clock and catch-up logic
+ */
+function startDeterministicAudioSender(session: CallSession): void {
+  if (session.isAudioSending) {
+    console.log(`⚠️ Audio sender already running for call ${session.callSid}`);
+    return;
+  }
+  
+  session.isAudioSending = true;
+  const audioStartTime = process.hrtime.bigint();
+  session.framesSentCount = 0;
+  
+  let framesSentThisSecond = 0;
+  let lastSecond = Math.floor(Date.now() / 1000);
+  let underrunThisCall = 0;
+  
+  console.log(`🎯 DETERMINISTIC SENDER: Started with monotonic clock`);
+  
+  session.outputTimer = setInterval(() => {
+    const currentTime = process.hrtime.bigint();
+    const elapsedNs = currentTime - audioStartTime;
+    const elapsedMs = Number(elapsedNs / BigInt(1000000));
+    
+    // Calculate how many frames SHOULD have been sent by now (50fps = 20ms intervals)
+    const expectedFrames = Math.floor(elapsedMs / 20);
+    const framesBehind = expectedFrames - session.framesSentCount;
+    
+    // Catch-up logic: send multiple frames if we're behind (GC hiccups, etc.)
+    const framesToSend = Math.min(framesBehind + 1, 3); // Max 3 frames per tick
+    
+    for (let i = 0; i < framesToSend; i++) {
+      const frame = session.outgoingQueue.shift();
+      if (!frame) {
+        // UNDERRUN: queue is empty but we need to send
+        underrunThisCall++;
+        session.underrunCount++;
+        console.warn(`🚨 UNDERRUN #${underrunThisCall}: No frame available at ${elapsedMs}ms (expected frame ${expectedFrames})`);
+        break;
+      }
+      
+      // Validate frame size
+      if (frame.length !== 160) {
+        console.error(`💥 CRITICAL: Frame size ${frame.length} ≠ 160 bytes`);
+        continue;
+      }
+      
+      // Send to Twilio
+      const payload = frame.toString('base64');
+      const twilioFrame = {
+        event: 'media',
+        streamSid: session.streamSid,
+        media: { payload }
+      };
+      
+      session.twilioWs.send(JSON.stringify(twilioFrame));
+      session.framesSentCount++;
+      framesSentThisSecond++;
+    }
+    
+    // Queue depth monitoring and metrics
+    const currentSecond = Math.floor(Date.now() / 1000);
+    const queueFrames = session.outgoingQueue.length;
+    const queueMs = queueFrames * 20;
+    
+    // Log metrics every second
+    if (currentSecond !== lastSecond) {
+      // Track queue depth history
+      session.queueDepthHistory.push(queueMs);
+      if (session.queueDepthHistory.length > 10) {
+        session.queueDepthHistory.shift(); // Keep last 10 seconds
+      }
+      
+      const avgQueueMs = session.queueDepthHistory.reduce((a, b) => a + b, 0) / session.queueDepthHistory.length;
+      const driftMs = elapsedMs - (session.framesSentCount * 20);
+      
+      console.log(`📊 AUDIO METRICS: ${framesSentThisSecond}fps | Queue: ${queueMs}ms | Avg: ${avgQueueMs.toFixed(0)}ms | Drift: ${driftMs.toFixed(1)}ms | Underruns: ${underrunThisCall}`);
+      
+      framesSentThisSecond = 0;
+      lastSecond = currentSecond;
+    }
+    
+    // Stop condition: queue empty and TTS finished
+    if (queueFrames === 0 && !session.isAssistantSpeaking) {
+      console.log(`🔚 QUEUE EMPTY: Stopping sender (TTS completed)`);
+      stopDeterministicAudioSender(session);
+    }
+    
+  }, 10); // Check every 10ms (twice as fast as frame rate for precision)
+}
+
+/**
+ * Stop the deterministic audio sender
+ */
+function stopDeterministicAudioSender(session: CallSession): void {
+  if (session.outputTimer) {
+    clearInterval(session.outputTimer);
+    session.outputTimer = undefined;
+  }
+  
+  session.isAudioSending = false;
+  
+  const finalQueueFrames = session.outgoingQueue.length;
+  const finalQueueMs = finalQueueFrames * 20;
+  
+  console.log(`🏁 SENDER STOPPED: ${session.framesSentCount} frames sent, ${finalQueueMs}ms remaining, ${session.underrunCount} total underruns`);
 }
 
 /**
