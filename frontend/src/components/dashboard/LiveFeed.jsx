@@ -57,9 +57,9 @@ function LiveFeed({ items, loading }) {
   const getEventConfig = (type) => {
     switch (type) {
       case 'call_started':
-        return { icon: Phone, color: 'text-green-600', bg: 'bg-green-50', label: 'Call Started' }
+        return { icon: Phone, color: 'text-green-600', bg: 'bg-green-50', label: 'Call' }
       case 'call_ended':
-        return { icon: PhoneOff, color: 'text-gray-600', bg: 'bg-gray-50', label: 'Call Ended' }
+        return { icon: Phone, color: 'text-gray-600', bg: 'bg-gray-50', label: 'Call' }
       case 'appointment_booked':
         return { icon: Calendar, color: 'text-blue-600', bg: 'bg-blue-50', label: 'Showing Booked' }
       case 'appointment_rescheduled':

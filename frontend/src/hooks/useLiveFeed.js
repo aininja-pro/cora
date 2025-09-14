@@ -30,13 +30,34 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
       }
     }
 
+    // Enhanced service extraction logic
+    let serviceRequested = analysis.service_requested || ''
+
+    // Check for booking/showing related content in various fields
+    if (!serviceRequested || serviceRequested === 'general_question') {
+      // Look for showing/appointment keywords in summary or analysis
+      const summaryText = (call.summary || analysis.call_summary || analysis.sms_summary || '').toLowerCase()
+      const appointmentScheduled = analysis.appointment_scheduled || false
+
+      if (appointmentScheduled || summaryText.includes('showing') || summaryText.includes('appointment')) {
+        serviceRequested = 'Property showing scheduled'
+      } else if (summaryText.includes('callback') || summaryText.includes('call back')) {
+        serviceRequested = summaryText.includes('title') ? 'Callback about title issue' : 'Callback requested'
+      } else if (summaryText.includes('listing') || summaryText.includes('property')) {
+        serviceRequested = 'Property inquiry'
+      } else if (analysis.call_type) {
+        serviceRequested = analysis.call_type.replace('_', ' ')
+      }
+    }
+
     const result = {
       callerName: call.caller_name || analysis.caller_name || 'Unknown',
       callType: call.call_type || analysis.call_type || '',
-      serviceRequested: analysis.service_requested || '',
+      serviceRequested: serviceRequested,
       leadQuality: analysis.lead_quality || '',
       callSummary: call.summary || analysis.call_summary || analysis.sms_summary || '',
       phone: call.caller_number || call.phone_number || '',
+      appointmentScheduled: analysis.appointment_scheduled || false,
       ...analysis
     }
 
@@ -69,11 +90,13 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
         }
 
       case 'call_ended':
+        const duration = data.ended_at ? calculateDuration(data.started_at, data.ended_at) : 'Unknown'
+
         return {
           ...baseItem,
           caller: analysis.callerName || data.caller_number || 'Unknown',
           phone: analysis.phone || data.caller_number,
-          duration: data.ended_at ? calculateDuration(data.started_at, data.ended_at) : 'Unknown',
+          duration: duration,
           transcript: analysis.callSummary || data.latest_transcript || 'Call completed',
           service: analysis.serviceRequested || analysis.callType || 'General inquiry',
           leadQuality: analysis.leadQuality,
@@ -168,10 +191,24 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
       console.log('🔍 LiveFeed: Recent calls (24h):', recentCalls.length)
 
       recentCalls.forEach(call => {
-        if (call.ended_at) {
-          items.push(transformToFeedItem(call, 'call_ended'))
-        } else {
+        console.log('🔍 LiveFeed: Processing call:', {
+          id: call.id,
+          ended_at: call.ended_at,
+          outcome: call.outcome,
+          status: call.status,
+          caller_number: call.caller_number
+        })
+
+        // Improved logic: check multiple indicators that a call is completed
+        // Most calls from the API should be completed since they have analysis data
+        const isCallActive = !call.ended_at && !call.outcome &&
+                            (!call.status || call.status === 'active' || call.status === 'in_progress')
+
+        if (isCallActive) {
           items.push(transformToFeedItem(call, 'call_started'))
+        } else {
+          // Default to call_ended for calls with analysis data
+          items.push(transformToFeedItem(call, 'call_ended'))
         }
       })
 
