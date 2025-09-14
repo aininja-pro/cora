@@ -99,6 +99,19 @@ function LiveFeed({ items, loading }) {
     return text.substring(0, length) + '...'
   }
 
+  const formatPhoneNumber = (phone) => {
+    if (!phone) return ''
+    // Remove all non-digits and format as (XXX) XXX-XXXX for US numbers
+    const cleaned = phone.replace(/\D/g, '')
+    if (cleaned.length === 11 && cleaned.startsWith('1')) {
+      const number = cleaned.slice(1)
+      return `(${number.slice(0,3)}) ${number.slice(3,6)}-${number.slice(6)}`
+    } else if (cleaned.length === 10) {
+      return `(${cleaned.slice(0,3)}) ${cleaned.slice(3,6)}-${cleaned.slice(6)}`
+    }
+    return phone // Return original if not standard format
+  }
+
   const getStatusPill = (item) => {
     const configs = {
       qualified: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'Qualified' },
@@ -188,37 +201,88 @@ function LiveFeed({ items, loading }) {
                           {item.type === 'call_ended' && (
                             <>
                               <p className="font-medium text-gray-900 mb-1">
-                                {item.caller} • {item.duration}
+                                {item.caller}
+                                {item.phone && ` • ${formatPhoneNumber(item.phone)}`}
+                                {item.duration && ` • ${item.duration}`}
                               </p>
+                              {item.service && (
+                                <p className="text-coral font-medium mb-1">{item.service}</p>
+                              )}
                               <p>{truncateText(item.transcript)}</p>
+                              {item.leadQuality && (
+                                <span className={`inline-block mt-1 px-2 py-1 rounded-full text-xs font-medium ${
+                                  item.leadQuality.toLowerCase().includes('high') || item.leadQuality.toLowerCase().includes('hot') ? 'bg-red-100 text-red-700' :
+                                  item.leadQuality.toLowerCase().includes('warm') ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {item.leadQuality.toUpperCase()} LEAD
+                                </span>
+                              )}
                             </>
                           )}
                           
+                          {item.type === 'call_started' && (
+                            <>
+                              <p className="font-medium text-gray-900 mb-1">
+                                {item.caller}
+                                {item.phone && ` • ${formatPhoneNumber(item.phone)}`}
+                              </p>
+                              {item.service && (
+                                <p className="text-coral font-medium mb-1">{item.service}</p>
+                              )}
+                              {item.leadQuality && (
+                                <span className={`inline-block mt-1 px-2 py-1 rounded-full text-xs font-medium ${
+                                  item.leadQuality.toLowerCase().includes('high') || item.leadQuality.toLowerCase().includes('hot') ? 'bg-red-100 text-red-700' :
+                                  item.leadQuality.toLowerCase().includes('warm') ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {item.leadQuality.toUpperCase()} LEAD
+                                </span>
+                              )}
+                            </>
+                          )}
+
                           {item.type === 'appointment_booked' && (
                             <>
                               <p className="font-medium text-gray-900">{item.property}</p>
-                              <p>{item.client} • {item.appointment_time}</p>
+                              <p>
+                                {item.client}
+                                {item.phone && ` • ${formatPhoneNumber(item.phone)}`}
+                                {item.appointment_time && ` • ${item.appointment_time}`}
+                              </p>
                             </>
                           )}
-                          
+
                           {item.type === 'sms_sent' && (
                             <>
                               <p className="font-medium text-gray-900">{item.recipient}</p>
                               <p>Template: {item.template}</p>
                             </>
                           )}
-                          
+
                           {item.type === 'lead_qualified' && (
                             <>
-                              <p className="font-medium text-gray-900">{item.caller} • {item.score} Quality</p>
+                              <p className="font-medium text-gray-900 mb-1">
+                                {item.caller}
+                                {item.phone && ` • ${formatPhoneNumber(item.phone)}`}
+                                {item.score && ` • ${item.score} Quality`}
+                              </p>
                               <p>{item.criteria}</p>
                             </>
                           )}
-                          
+
                           {item.type === 'missed_call' && (
                             <>
-                              <p className="font-medium text-gray-900">{item.caller}</p>
-                              <p>{item.phone} {item.voicemail ? '• Left voicemail' : ''}</p>
+                              <p className="font-medium text-gray-900 mb-1">
+                                {item.caller}
+                                {item.phone && ` • ${formatPhoneNumber(item.phone)}`}
+                              </p>
+                              {item.service && (
+                                <p className="text-coral font-medium mb-1">{item.service}</p>
+                              )}
+                              <p className="text-gray-500">
+                                {item.voicemail ? 'Left voicemail' : 'No voicemail'}
+                              </p>
                             </>
                           )}
                         </div>

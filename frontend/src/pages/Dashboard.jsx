@@ -15,6 +15,9 @@ import OnboardingFlow from '../components/dashboard/OnboardingFlow'
 import sampleDataService from '../services/sampleDataService'
 import autoResolutionService from '../services/autoResolutionService'
 
+// Hooks
+import { useLiveFeed } from '../hooks/useLiveFeed'
+
 // Initialize Supabase client
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
@@ -32,11 +35,13 @@ function Dashboard() {
   const [timeRange, setTimeRange] = useState('today') // today, 7d, 30d
   const [selectedAgents, setSelectedAgents] = useState(['all'])
   const [urgentItems, setUrgentItems] = useState([])
-  const [liveFeedItems, setLiveFeedItems] = useState([])
   const [queueItems, setQueueItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [useSampleData, setUseSampleData] = useState(false)
   const [demoMode, setDemoMode] = useState('dashboard') // 'onboarding' or 'dashboard'
+
+  // Use the real live feed data
+  const { feedItems: liveFeedItems, loading: feedLoading } = useLiveFeed('Ray Richards')
 
   useEffect(() => {
     // Get agent info from localStorage
@@ -104,7 +109,6 @@ function Dashboard() {
       await Promise.all([
         loadKPIData(),
         loadUrgentItems(),
-        loadLiveFeed(),
         loadMyQueue()
       ])
     } catch (error) {
@@ -330,105 +334,6 @@ function Dashboard() {
     return day >= 1 && day <= 5 && hour >= 8 && hour < 18 // Mon-Fri 8AM-6PM
   }
 
-  const loadLiveFeed = async () => {
-    try {
-      // Use sample data if enabled
-      if (useSampleData) {
-        const sampleFeed = sampleDataService.getSampleLiveFeedItems()
-        setLiveFeedItems(sampleFeed)
-        return
-      }
-
-      const now = new Date()
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-      
-      // Get today's events (rolling 24h) as specified
-      const [callsResponse, notificationsResponse] = await Promise.all([
-        fetch(`/api/calls/search?start_date=${todayStart.toISOString()}&limit=50`),
-        fetch(`/api/notifications/recent?limit=20`) // When available
-      ])
-      
-      const callsData = await callsResponse.json()
-      const calls = callsData.success ? callsData.calls || [] : []
-      
-      const feedItems = []
-      
-      // Process calls into feed events
-      for (const call of calls) {
-        // Call started/ended + last transcript snippet (140 chars)
-        if (call.status === 'completed' || call.status === 'answered') {
-          const transcriptSnippet = call.transcript ? 
-            call.transcript.substring(0, 140) + (call.transcript.length > 140 ? '...' : '') : ''
-          
-          feedItems.push({
-            id: `call_${call.id}`,
-            type: 'call_ended',
-            timestamp: new Date(call.end_time || call.created_at),
-            caller: call.caller_name || 'Unknown Caller',
-            phone: call.phone_number,
-            transcript: transcriptSnippet,
-            duration: call.duration ? formatDuration(call.duration) : '',
-            status: getCallStatus(call),
-            callId: call.id
-          })
-        }
-        
-        // Check for appointments booked from AI analysis
-        if (call.ai_response && call.ai_response.appointment_scheduled) {
-          feedItems.push({
-            id: `apt_${call.id}`,
-            type: 'appointment_booked',
-            timestamp: new Date(call.created_at),
-            property: call.ai_response.property_address || 'Property',
-            client: call.caller_name || call.phone_number,
-            appointment_time: call.ai_response.appointment_time || 'TBD',
-            status: 'confirmed',
-            callId: call.id
-          })
-        }
-        
-        // Check for qualified leads
-        if (call.ai_response && call.ai_response.lead_qualified) {
-          feedItems.push({
-            id: `lead_${call.id}`,
-            type: 'lead_qualified',
-            timestamp: new Date(call.created_at),
-            caller: call.caller_name || call.phone_number,
-            score: call.ai_response.lead_quality || 'Medium',
-            criteria: call.ai_response.qualification_reason || 'Met qualification criteria',
-            status: 'qualified',
-            callId: call.id
-          })
-        }
-        
-        // Check for missed calls
-        if (call.status === 'no_answer' || call.status === 'busy') {
-          feedItems.push({
-            id: `missed_${call.id}`,
-            type: 'missed_call',
-            timestamp: new Date(call.created_at),
-            caller: call.caller_name || 'Unknown',
-            phone: call.phone_number,
-            voicemail: call.voicemail_left || false,
-            status: call.voicemail_left ? 'needs_followup' : 'missed',
-            callId: call.id
-          })
-        }
-      }
-      
-      // TODO: Add SMS sent/failed events when notifications API is available
-      
-      // Sort by timestamp (newest first) and limit to 50 items
-      feedItems.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-      setLiveFeedItems(feedItems.slice(0, 50))
-      
-    } catch (error) {
-      console.error('Error loading live feed:', error)
-      // Fallback to sample data
-      const sampleFeed = sampleDataService.getSampleLiveFeedItems()
-      setLiveFeedItems(sampleFeed)
-    }
-  }
   
   const formatDuration = (seconds) => {
     const minutes = Math.floor(seconds / 60)
@@ -576,8 +481,7 @@ function Dashboard() {
           if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
             // Refresh all data to ensure consistency - optimized for <2s
             Promise.all([
-              loadLiveFeed(),
-              loadUrgentItems(), 
+              loadUrgentItems(),
               loadMyQueue(),
               loadKPIData() // Update stats for new calls
             ])
@@ -600,8 +504,7 @@ function Dashboard() {
         { event: '*', schema: 'public', table: 'call_transcripts' },
         (payload) => {
           console.log('Realtime transcript update:', payload)
-          // Only update live feed for transcript changes
-          loadLiveFeed()
+          // Live feed updates are now handled by useLiveFeed hook
         }
       )
       .subscribe()
@@ -613,8 +516,7 @@ function Dashboard() {
         { event: '*', schema: 'public', table: 'notifications' },
         (payload) => {
           console.log('Realtime notification update:', payload)
-          // Update live feed for SMS sent/failed events
-          loadLiveFeed()
+          // Live feed updates are now handled by useLiveFeed hook
         }
       )
       .subscribe()
@@ -711,9 +613,9 @@ function Dashboard() {
         />
 
         {/* Live Feed Section - Context and recent activity */}
-        <LiveFeed 
+        <LiveFeed
           items={liveFeedItems}
-          loading={loading}
+          loading={feedLoading}
         />
       </div>
 
