@@ -302,8 +302,13 @@ Start with this exact greeting, then wait for the caller:
           // user STT
           input_audio_transcription: { model: "whisper-1", language: "en" },
 
-          // VAD tuned for phone pauses
-          turn_detection: { type: "server_vad", silence_duration_ms: 500 },
+          // VAD optimized for faster turn detection (target <900ms response time)
+          turn_detection: { 
+            type: "server_vad", 
+            silence_duration_ms: 350,    // 500→350ms: faster end-of-speech
+            prefix_padding_ms: 200,      // preserves word endings
+            threshold: 0.44              // 0.50→0.44: more sensitive
+          },
           
           voice: voice,
           instructions: instructions,

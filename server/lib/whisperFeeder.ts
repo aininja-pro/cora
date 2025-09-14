@@ -5,10 +5,10 @@ import { transcribeAndPersistUser } from "./restTranscription";
 
 type SendFn = (msg: any) => void;
 
-// === Tunables (optimized for phone speech - ChatGPT Step 4) ===
-const MIN_UTTER_MS = 600;   // was 800
-const END_SIL_MS   = 220;   // was 300 (phone speech often has ~200–250ms gaps)
-const HARD_MAX_MS  = 3000;  // was 4500
+// === Tunables (optimized for <900ms response time) ===
+const MIN_UTTER_MS = 500;   // 600→500ms: commit faster
+const END_SIL_MS   = 180;   // 220→180ms: detect silence faster
+const HARD_MAX_MS  = 2500;  // 3000→2500ms: safety valve sooner
 
 export class WhisperFeeder {
   private byteBuf = Buffer.alloc(0); // μ-law bytes @ 8 kHz

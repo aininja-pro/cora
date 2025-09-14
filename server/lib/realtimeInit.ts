@@ -36,7 +36,12 @@ export function createRealtimeForCall(opts: {
         input_audio_format: "g711_ulaw",  // you're feeding μ-law
         output_audio_format: "g711_ulaw",
         modalities: ["audio", "text"],
-        turn_detection: { type: "server_vad", silence_duration_ms: 500 },
+        turn_detection: { 
+          type: "server_vad", 
+          silence_duration_ms: 350,    // 500→350ms: faster end-of-speech detection
+          prefix_padding_ms: 200,      // preserves word endings
+          threshold: 0.44              // 0.50→0.44: slightly more sensitive
+        },
         voice: voice || 'verse',
         instructions: instructions || 'You are a helpful assistant.',
         tools: require('../ai/tools').TOOLS,
