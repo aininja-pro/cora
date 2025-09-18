@@ -1,6 +1,6 @@
 // API Configuration
-// Change this to https://cora-backend-epv0.onrender.com for local backend
-// Update this with your actual Render URL
+// For local development, use http://localhost:8000
+// For production, use https://cora-backend-epv0.onrender.com
 export const API_URL = 'https://cora-backend-epv0.onrender.com'
   // UPDATE THIS WITH YOUR ACTUAL RENDER URL!
 

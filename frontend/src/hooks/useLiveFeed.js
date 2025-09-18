@@ -182,15 +182,20 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
 
       console.log('🔍 LiveFeed: Backend API calls:', calls.length, calls)
 
-      // Filter to recent calls (last 24 hours) and add call events
-      const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000)
+      // For testing, let's be more lenient with the time filter
+      // Filter to recent calls (last 7 days instead of 24 hours)
+      const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
       const recentCalls = calls.filter(call =>
-        new Date(call.started_at) >= cutoff
+        new Date(call.started_at || call.created_at) >= cutoff
       )
 
-      console.log('🔍 LiveFeed: Recent calls (24h):', recentCalls.length)
+      console.log('🔍 LiveFeed: Recent calls (7 days):', recentCalls.length)
 
-      recentCalls.forEach(call => {
+      // If no recent calls, just use all calls for now
+      const callsToProcess = recentCalls.length > 0 ? recentCalls : calls.slice(0, 10)
+      console.log('🔍 LiveFeed: Processing', callsToProcess.length, 'calls')
+
+      callsToProcess.forEach(call => {
         console.log('🔍 LiveFeed: Processing call:', {
           id: call.id,
           ended_at: call.ended_at,
@@ -215,10 +220,10 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
       // For now, let's focus on calls since that's what we know works
       // We can add tool calls and showings later once this is working
 
-      // Sort all items by timestamp and take latest 50
+      // Sort all items by timestamp and take latest 5
       const sortedItems = items
         .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 50)
+        .slice(0, 5)
 
       console.log('🔍 LiveFeed: Final feed items:', sortedItems.length, sortedItems)
       setFeedItems(sortedItems)
@@ -254,7 +259,7 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
           setFeedItems(prev => {
             // Remove any existing item with same ID, then add new one at top
             const filtered = prev.filter(item => item.id !== newItem.id)
-            return [newItem, ...filtered].slice(0, 50)
+            return [newItem, ...filtered].slice(0, 5)
           })
         }
       })
@@ -296,7 +301,7 @@ export function useLiveFeed(tenantId = 'Ray Richards') {
           }
 
           if (newItem) {
-            setFeedItems(prev => [newItem, ...prev].slice(0, 50))
+            setFeedItems(prev => [newItem, ...prev].slice(0, 5))
           }
         }
       })
