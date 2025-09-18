@@ -8,7 +8,7 @@ import SignalBar from '../components/dashboard/SignalBar'
 import UrgentSection from '../components/dashboard/UrgentSection'
 import LiveFeed from '../components/dashboard/LiveFeed'
 import MyQueue from '../components/dashboard/MyQueue'
-import VoiceFAB from '../components/dashboard/VoiceFAB'
+import EnhancedVoiceAssistant from '../components/dashboard/EnhancedVoiceAssistant'
 import OnboardingFlow from '../components/dashboard/OnboardingFlow'
 
 // Services
@@ -619,8 +619,23 @@ function Dashboard() {
         />
       </div>
 
-      {/* Voice FAB - Always visible, never blocking */}
-      <VoiceFAB />
+      {/* Enhanced Voice Assistant - Prominent AI-powered voice interface */}
+      <EnhancedVoiceAssistant
+        onAddUrgent={(task) => {
+          console.log('Adding urgent task:', task)
+          // Add to urgent items
+          setUrgentItems(prev => [task, ...prev])
+        }}
+        onAddToQueue={(item) => {
+          console.log('Adding to queue:', item)
+          // Add to queue items
+          setQueueItems(prev => [item, ...prev])
+        }}
+        onUpdateLiveFeed={() => {
+          // Trigger live feed refresh if needed
+          console.log('Updating live feed')
+        }}
+      />
 
       {/* Demo Navigation */}
       <div className="fixed bottom-4 left-4 z-40">

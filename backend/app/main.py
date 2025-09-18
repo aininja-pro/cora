@@ -18,7 +18,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://192.168.1.81:5173", "https://api.synthflow.ai", "*"],
+    allow_origins=["http://localhost:5174", "http://192.168.1.81:5174", "https://api.synthflow.ai", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

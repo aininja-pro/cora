@@ -35,7 +35,7 @@ restart_voice
 
 echo "🎯 CORA servers started!"
 echo "📞 Call: +1-316-867-0416"
-echo "🌐 Frontend: http://localhost:5173"
+echo "🌐 Frontend: http://localhost:5174"
 echo "💡 Press Ctrl+C to stop all servers"
 
 # Monitor and restart on crash

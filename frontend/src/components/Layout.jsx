@@ -2,7 +2,6 @@ import { Link, useLocation } from 'react-router-dom'
 import { Home, Building, Phone, LogOut, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import logo from '../assets/logo.svg'
-import VoiceAssistant from './VoiceAssistant'
 
 function Layout({ children, onLogout }) {
   const location = useLocation()
@@ -106,13 +105,6 @@ function Layout({ children, onLogout }) {
       <div className="lg:hidden">
         {children}
       </div>
-      
-      {/* Voice Assistant - Available on all pages */}
-      <VoiceAssistant 
-        onCommand={(action) => {
-          console.log('Voice command action:', action)
-        }}
-      />
     </div>
   )
 }
