@@ -225,7 +225,7 @@ function Dashboard() {
       const callsData = await callsResponse.json()
       const calls = callsData.success ? callsData.calls || [] : []
       
-      const urgentItems = []
+      const newUrgentItems = []
       
       // Process each call for urgent conditions
       for (const call of calls) {
@@ -240,7 +240,7 @@ function Dashboard() {
           const hoursUntilDeadline = (deadline - now) / (1000 * 60 * 60)
           
           if (hoursUntilDeadline <= 24) {
-            urgentItems.push({
+            newUrgentItems.push({
               id: `contract_${call.id}`,
               priority: 'urgent',
               title: hoursUntilDeadline < 0 ? 'Contract deadline overdue!' : `Contract deadline due in ${Math.round(hoursUntilDeadline)}h`,
@@ -255,7 +255,7 @@ function Dashboard() {
         // 2. Callback requested and unanswered for ≥30 min during business hours
         if (businessHours && call.ai_response && call.ai_response.callback_requested && !call.agent_contacted) {
           if (minutesSince >= 30) {
-            urgentItems.push({
+            newUrgentItems.push({
               id: `callback_${call.id}`,
               priority: 'urgent',
               title: 'Callback overdue',
@@ -270,7 +270,7 @@ function Dashboard() {
         // 3. New qualified lead with no agent touch ≥60 min (business hours)
         if (businessHours && call.ai_response && call.ai_response.lead_qualified && !call.agent_contacted) {
           if (minutesSince >= 60) {
-            urgentItems.push({
+            newUrgentItems.push({
               id: `qualified_${call.id}`,
               priority: 'urgent', 
               title: 'Qualified lead needs attention',
@@ -285,7 +285,7 @@ function Dashboard() {
         // 4. Voicemail from new lead and no agent touch ≥30 min
         if (call.status === 'no_answer' && call.voicemail_left && !call.agent_contacted) {
           if (minutesSince >= 30) {
-            urgentItems.push({
+            newUrgentItems.push({
               id: `voicemail_${call.id}`,
               priority: 'urgent',
               title: 'New voicemail needs response', 
@@ -306,7 +306,7 @@ function Dashboard() {
       }
       
       // Sort: Urgent > Conflict > Routine. Within each: ascending by deadline/start time, then created_at
-      urgentItems.sort((a, b) => {
+      newUrgentItems.sort((a, b) => {
         const priorityOrder = { urgent: 0, scheduling_conflict: 1, routine: 2 }
         if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
           return priorityOrder[a.priority] - priorityOrder[b.priority]
@@ -318,7 +318,7 @@ function Dashboard() {
         return bTime - aTime // Higher time = more urgent
       })
       
-      setUrgentItems(urgentItems)
+      setUrgentItems(newUrgentItems)
       
     } catch (error) {
       console.error('Error loading urgent items:', error)
@@ -362,7 +362,7 @@ function Dashboard() {
       const callsData = await callsResponse.json()
       const calls = callsData.success ? callsData.calls || [] : []
       
-      const queueItems = []
+      const newQueueItems = []
       
       for (const call of calls) {
         // Skip if already handled by agent
@@ -373,7 +373,7 @@ function Dashboard() {
         
         // Confirm/Reschedule showing
         if (call.ai_response?.appointment_scheduled && !call.ai_response?.appointment_confirmed) {
-          queueItems.push({
+          newQueueItems.push({
             id: `confirm_${call.id}`,
             type: 'confirm_showing',
             title: `Confirm showing at ${call.ai_response.property_address || 'Property'}`,
@@ -387,7 +387,7 @@ function Dashboard() {
         
         // Call back requests
         if (call.ai_response?.callback_requested) {
-          queueItems.push({
+          newQueueItems.push({
             id: `callback_${call.id}`,
             type: 'call_back',
             title: `Call back ${call.caller_name || 'caller'}`,
@@ -406,7 +406,7 @@ function Dashboard() {
           if (call.ai_response.price_range) criteria.push(`$${call.ai_response.price_range}`)
           if (call.ai_response.location_preference) criteria.push(call.ai_response.location_preference)
           
-          queueItems.push({
+          newQueueItems.push({
             id: `listings_${call.id}`,
             type: 'send_listings', 
             title: `Send listings to ${call.caller_name || 'client'}`,
@@ -420,7 +420,7 @@ function Dashboard() {
         
         // Send recap (for completed calls with significant content)
         if (call.status === 'completed' && call.transcript && call.transcript.length > 200 && !call.recap_sent) {
-          queueItems.push({
+          newQueueItems.push({
             id: `recap_${call.id}`,
             type: 'send_recap',
             title: `Send recap to ${call.caller_name || 'client'}`,
@@ -434,7 +434,7 @@ function Dashboard() {
         
         // Add note for qualified leads without detailed info
         if (call.ai_response?.lead_qualified && !call.ai_response?.detailed_notes) {
-          queueItems.push({
+          newQueueItems.push({
             id: `note_${call.id}`,
             type: 'add_note',
             title: `Add notes for ${call.caller_name || 'qualified lead'}`,
@@ -448,7 +448,7 @@ function Dashboard() {
       }
       
       // Sort by priority (most urgent first) and creation time
-      queueItems.sort((a, b) => {
+      newQueueItems.sort((a, b) => {
         const priorityOrder = { 
           confirm_showing: 0,
           call_back: 1, 
@@ -459,7 +459,7 @@ function Dashboard() {
         return priorityOrder[a.type] - priorityOrder[b.type]
       })
       
-      setQueueItems(queueItems)
+      setQueueItems(newQueueItems)
       
     } catch (error) {
       console.error('Error loading My Queue:', error)
@@ -623,13 +623,13 @@ function Dashboard() {
       <EnhancedVoiceAssistant
         onAddUrgent={(task) => {
           console.log('Adding urgent task:', task)
-          // Add to urgent items
-          setUrgentItems(prev => [task, ...prev])
+          // Add to urgent items - ensure prev is an array
+          setUrgentItems(prev => [task, ...(prev || [])])
         }}
         onAddToQueue={(item) => {
           console.log('Adding to queue:', item)
-          // Add to queue items
-          setQueueItems(prev => [item, ...prev])
+          // Add to queue items - ensure prev is an array
+          setQueueItems(prev => [item, ...(prev || [])])
         }}
         onUpdateLiveFeed={() => {
           // Trigger live feed refresh if needed

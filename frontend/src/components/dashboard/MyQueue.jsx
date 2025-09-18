@@ -1,7 +1,7 @@
 import { CheckCircle, Phone, Send, Calendar, FileText, User, Undo } from 'lucide-react'
 import { useState } from 'react'
 
-function MyQueue({ items, loading }) {
+function MyQueue({ items = [], loading }) {
   const [completedItems, setCompletedItems] = useState([])
   const [showUndo, setShowUndo] = useState(null)
 
@@ -35,7 +35,7 @@ function MyQueue({ items, loading }) {
     }
   ]
 
-  const displayItems = items.length > 0 ? items : (loading ? [] : sampleItems.filter(item => 
+  const displayItems = items && items.length > 0 ? items : (loading ? [] : sampleItems.filter(item => 
     !completedItems.includes(item.id)
   ))
 

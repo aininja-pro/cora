@@ -1,6 +1,6 @@
 import { AlertTriangle, Clock, Calendar, CheckCircle, MoreHorizontal } from 'lucide-react'
 
-function UrgentSection({ items, loading }) {
+function UrgentSection({ items = [], loading }) {
   // Priority badges configuration
   const getPriorityConfig = (priority) => {
     switch (priority) {
@@ -51,7 +51,7 @@ function UrgentSection({ items, loading }) {
     }
   ]
 
-  const displayItems = items.length > 0 ? items : (loading ? [] : sampleItems)
+  const displayItems = items || []
 
   if (loading) {
     return (
@@ -144,6 +144,7 @@ function UrgentSection({ items, loading }) {
               </p>
 
               {/* Actions */}
+              {item.actions && item.actions.length > 0 && (
               <div className="flex gap-2">
                 {item.actions.map((action, idx) => (
                   <button
@@ -158,6 +159,7 @@ function UrgentSection({ items, loading }) {
                   </button>
                 ))}
               </div>
+              )}
             </div>
           )
         })}

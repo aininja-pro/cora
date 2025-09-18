@@ -7,6 +7,7 @@ import sessionRouter from './routes/session';
 import twilioRouter from './routes/twilio';
 import toolsRouter from './routes/tools';
 import { handleMediaStream } from './ws/mediaBridge';
+import { handleVoiceAssistant } from './ws/voiceAssistant';
 
 const app = express();
 const server = createServer(app);
@@ -94,10 +95,12 @@ app.get('/debug-paths', (req, res) => {
   });
 });
 
-// WebSocket handler for Twilio media streams
+// WebSocket handlers
 wss.on('connection', (ws, req) => {
   if (req.url?.startsWith('/media-stream')) {
     handleMediaStream(ws, req);
+  } else if (req.url === '/ws/voice-assistant') {
+    handleVoiceAssistant(ws, req);
   } else {
     ws.close(1002, 'Unsupported WebSocket endpoint');
   }

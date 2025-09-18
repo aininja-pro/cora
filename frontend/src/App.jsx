@@ -6,6 +6,7 @@ import Properties from './pages/Properties'
 import CallsSimple from './pages/CallsSimple'
 import CallDetail from './pages/CallDetail'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -49,10 +50,12 @@ function App() {
         <Route
           path="/dashboard"
           element={
-            isAuthenticated ? 
-              <Layout onLogout={handleLogout}>
-                <Dashboard />
-              </Layout> : 
+            isAuthenticated ?
+              <ErrorBoundary>
+                <Layout onLogout={handleLogout}>
+                  <Dashboard />
+                </Layout>
+              </ErrorBoundary> :
               <Navigate to="/" />
           }
         />

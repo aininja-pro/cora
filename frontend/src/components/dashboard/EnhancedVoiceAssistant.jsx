@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Mic, MicOff, Sparkles, X, Loader2 } from 'lucide-react'
 import { API_URL } from '../../config.js'
 
-function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed }) {
+function EnhancedVoiceAssistant({ onAddUrgent = () => {}, onAddToQueue = () => {}, onUpdateLiveFeed = () => {} }) {
   const [isListening, setIsListening] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [showInterface, setShowInterface] = useState(false)
@@ -81,13 +81,42 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
     setFeedback('Processing command...')
 
     try {
-      // For now, skip backend and use local processing
-      // This avoids network errors that might cause crashes
-      await processCommandLocally(command)
+      // Call the backend API with OpenAI processing
+      const response = await fetch(`${API_URL}/api/voice/process-command`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ command })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to process command')
+      }
+
+      const result = await response.json()
+      console.log('OpenAI processed command:', result)
+
+      // Execute the action based on the response
+      if (result.type === 'urgent') {
+        await executeAction({
+          type: 'add_urgent',
+          data: result
+        })
+        setFeedback(`✅ Added: ${result.title}`)
+      } else {
+        await executeAction({
+          type: 'add_to_queue',
+          data: result
+        })
+        setFeedback(`✅ Added to queue: ${result.title}`)
+      }
 
     } catch (error) {
       console.error('Error processing command:', error)
-      setFeedback('Error processing command. Please try again.')
+      // Fallback to local processing if backend fails
+      console.log('Falling back to local processing')
+      await processCommandLocally(command)
     } finally {
       setIsProcessing(false)
     }
@@ -98,39 +127,79 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
     console.log('Processing command locally:', command)
 
     try {
-      // Pattern matching for different commands
-      if (lowerCommand.includes('urgent') || lowerCommand.includes('callback') || lowerCommand.includes('call back')) {
-        // Extract name if mentioned - improved regex to catch more variations
-        const namePatterns = [
-          /(?:for|to|with)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
-          /to\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/i,
-          /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*$/i // Name at the end
-        ]
+      // Pattern matching for SHOWING/APPOINTMENT commands
+      if (lowerCommand.includes('showing') || lowerCommand.includes('appointment') || lowerCommand.includes('schedule')) {
+        // Extract address or location
+        const addressMatch = command.match(/(?:at|for)\s+(.+?)(?:\s+at\s+|$)/i) ||
+                           command.match(/\d+\s+\w+\s+(?:street|st|avenue|ave|drive|dr|road|rd|lane|ln)/i)
+        const address = addressMatch ? addressMatch[0].replace(/^(at|for)\s+/i, '') : 'TBD Location'
 
-        let name = 'Unknown'
-        for (const pattern of namePatterns) {
-          const match = command.match(pattern)
-          if (match) {
-            name = match[1]
-            break
-          }
-        }
-
-        // Clean up common speech recognition errors
-        name = name.replace(/\s+(or|gore|my)$/i, '').trim()
-        if (name.toLowerCase().includes('mike or')) {
-          name = 'Mike Orr'
-        }
+        // Extract time if mentioned
+        const timeMatch = command.match(/(?:at|for)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i)
+        const time = timeMatch ? timeMatch[1] : 'TBD'
 
         await executeAction({
           type: 'add_urgent',
           data: {
-            contact: name,
-            task: `Callback requested - ${name}`,
+            taskType: 'showing',
+            contact: address,
+            task: `Schedule showing - ${address}`,
+            priority: 'high',
+            time: time
+          }
+        })
+        setFeedback(`✅ Added showing for ${address}`)
+
+      // Pattern matching for CALLBACK commands
+      } else if (lowerCommand.includes('call') && lowerCommand.includes('back')) {
+        // Extract name
+        const nameMatch = command.match(/call\s+(.+?)\s+back/i) ||
+                         command.match(/call\s+back\s+(.+)/i)
+        const name = nameMatch ? nameMatch[1].trim() : 'Unknown'
+
+        // Clean up common speech recognition errors
+        const cleanName = name.replace(/\s+(or|gore|my)$/i, '').trim()
+          .replace(/mike or/i, 'Mike Orr')
+
+        await executeAction({
+          type: 'add_urgent',
+          data: {
+            taskType: 'callback',
+            contact: cleanName,
+            task: `Call back ${cleanName}`,
             priority: 'high'
           }
         })
-        setFeedback(`✅ Added urgent callback for ${name}`)
+        setFeedback(`✅ Added callback for ${cleanName}`)
+
+      // Pattern matching for direct CALL commands (not callback)
+      } else if (lowerCommand.includes('call') && !lowerCommand.includes('back')) {
+        const nameMatch = command.match(/call\\s+(.+)/i)
+        const name = nameMatch ? nameMatch[1].trim() : 'Unknown'
+
+        await executeAction({
+          type: 'add_urgent',
+          data: {
+            taskType: 'call',
+            contact: name,
+            task: `Call ${name}`,
+            priority: 'high'
+          }
+        })
+        setFeedback(`✅ Added call task for ${name}`)
+
+      // Pattern matching for URGENT tasks
+      } else if (lowerCommand.includes('urgent')) {
+        await executeAction({
+          type: 'add_urgent',
+          data: {
+            taskType: 'urgent',
+            contact: 'Task',
+            task: command,
+            priority: 'urgent'
+          }
+        })
+        setFeedback(`✅ Added urgent task`)
 
       } else if (lowerCommand.includes('queue') || lowerCommand.includes('follow up')) {
         await executeAction({
@@ -142,30 +211,6 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
         })
         setFeedback('Added to your queue')
 
-      } else if (lowerCommand.includes('showing') || lowerCommand.includes('appointment')) {
-        const timeMatch = command.match(/(?:at|for)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i)
-        const time = timeMatch ? timeMatch[1] : 'TBD'
-
-        await executeAction({
-          type: 'schedule_showing',
-          data: {
-            description: command,
-            time: time
-          }
-        })
-        setFeedback(`Scheduling showing for ${time}`)
-
-      } else if (lowerCommand.includes('call') || lowerCommand.includes('phone')) {
-        const nameMatch = command.match(/(?:call|phone)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i)
-        const name = nameMatch ? nameMatch[1] : 'Unknown'
-
-        await executeAction({
-          type: 'initiate_call',
-          data: {
-            contact: name
-          }
-        })
-        setFeedback(`Preparing to call ${name}`)
 
       } else {
         setFeedback('Command understood. What would you like me to do?')
@@ -185,13 +230,17 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
         switch (action.type) {
           case 'add_urgent':
             if (onAddUrgent) {
+              const data = action.data
               onAddUrgent({
                 id: Date.now(),
-                type: 'callback',
-                contact: action.data.contact,
-                description: action.data.task,
-                time: new Date().toISOString(),
-                priority: 'high'
+                type: data.task_type || 'callback',
+                contact: data.contact || '',
+                title: data.title,
+                description: data.description,
+                context: data.location || data.phone || '',
+                time: data.time || new Date().toISOString(),
+                priority: data.priority || 'urgent',
+                actions: data.actions || ['Call Now', 'Add Note']
               })
               console.log('Successfully added urgent callback')
             } else {
@@ -201,11 +250,17 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
 
           case 'add_to_queue':
             if (onAddToQueue) {
+              const data = action.data
               onAddToQueue({
                 id: Date.now(),
-                task: action.data.task,
-                priority: action.data.priority || 'normal',
-                time: new Date().toISOString()
+                type: data.task_type || 'follow_up',
+                title: data.title,
+                task: data.description,
+                contact: data.contact || 'Task',
+                phone: data.phone || '',
+                status: 'open',
+                priority: data.priority || 'normal',
+                time: data.time || new Date().toISOString()
               })
               console.log('Successfully added to queue')
             } else {
@@ -214,13 +269,37 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
             break
 
           case 'schedule_showing':
-            // TODO: Integrate with calendar
-            console.log('Scheduling:', action.data)
+            if (onAddUrgent) {
+              onAddUrgent({
+                id: Date.now(),
+                type: 'showing',
+                contact: action.data.description,
+                title: `Schedule showing`,
+                description: action.data.description,
+                context: `Time: ${action.data.time}`,
+                time: new Date().toISOString(),
+                priority: 'urgent',
+                actions: ['Confirm', 'Reschedule']
+              })
+              console.log('Successfully added showing')
+            }
             break
 
           case 'initiate_call':
-            // TODO: Integrate with calling system
-            console.log('Initiating call to:', action.data.contact)
+            if (onAddUrgent) {
+              onAddUrgent({
+                id: Date.now(),
+                type: 'call',
+                contact: action.data.contact,
+                title: `Call ${action.data.contact}`,
+                description: `Initiate call to ${action.data.contact}`,
+                context: `Voice request`,
+                time: new Date().toISOString(),
+                priority: 'urgent',
+                actions: ['Call Now', 'Schedule']
+              })
+              console.log('Successfully added call task')
+            }
             break
 
           default:
@@ -264,28 +343,40 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
     }
   }
 
-  return (
-    <>
-      {/* Enhanced Voice Interface Modal */}
-      {showInterface && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+  // Wrap return in try-catch to prevent crashes
+  try {
+    return (
+      <>
+        {/* Enhanced Voice Interface Modal */}
+        {showInterface && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => {
+            onClick={(e) => {
+              e.stopPropagation()
               // Only close if not listening or processing
               if (!isListening && !isProcessing && !transcript) {
                 setShowInterface(false)
+                setFeedback('')
               }
             }}
           />
 
           {/* Modal */}
-          <div className="relative bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full animate-scale-up">
+          <div className="relative bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-200">
             {/* Close button */}
             {!isProcessing && (
               <button
-                onClick={() => setShowInterface(false)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowInterface(false)
+                  setTranscript('')
+                  setFeedback('')
+                  if (isListening && recognition) {
+                    recognition.stop()
+                  }
+                }}
                 className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600"
               >
                 <X className="h-5 w-5" />
@@ -369,7 +460,7 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
       >
         {/* Hover label */}
         {isHovering && !showInterface && (
-          <div className="absolute bottom-full right-0 mb-3 px-4 py-2 bg-gray-900 text-white rounded-lg whitespace-nowrap animate-fade-in">
+          <div className="absolute bottom-full right-0 mb-3 px-4 py-2 bg-gray-900 text-white rounded-lg whitespace-nowrap animate-in fade-in slide-in-from-bottom-1 duration-200">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-yellow-400" />
               <span className="text-sm font-medium">Talk to CORA</span>
@@ -393,7 +484,6 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
             hover:shadow-coral/50
             flex items-center justify-center
             ring-4 ring-white
-            animate-subtle-bounce
           `}
         >
           {/* Sparkle effect */}
@@ -414,48 +504,22 @@ function EnhancedVoiceAssistant({ onAddUrgent, onAddToQueue, onUpdateLiveFeed })
         </div>
       </div>
 
-      {/* Custom styles */}
-      <style jsx>{`
-        @keyframes scale-up {
-          from {
-            transform: scale(0.95);
-            opacity: 0;
-          }
-          to {
-            transform: scale(1);
-            opacity: 1;
-          }
-        }
-        @keyframes fade-in {
-          from {
-            opacity: 0;
-            transform: translateY(4px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        @keyframes subtle-bounce {
-          0%, 100% {
-            transform: translateY(0);
-          }
-          50% {
-            transform: translateY(-2px);
-          }
-        }
-        .animate-scale-up {
-          animation: scale-up 0.2s ease-out;
-        }
-        .animate-fade-in {
-          animation: fade-in 0.2s ease-out;
-        }
-        .animate-subtle-bounce {
-          animation: subtle-bounce 3s ease-in-out infinite;
-        }
-      `}</style>
     </>
-  )
+    )
+  } catch (error) {
+    console.error('Error rendering EnhancedVoiceAssistant:', error)
+    // Return a minimal fallback UI if there's an error
+    return (
+      <div className="fixed bottom-8 right-8 z-40">
+        <button
+          onClick={() => window.location.reload()}
+          className="h-20 w-20 rounded-full shadow-2xl bg-red-500 text-white flex items-center justify-center"
+        >
+          <span className="text-xs">Error - Click to reload</span>
+        </button>
+      </div>
+    )
+  }
 }
 
 export default EnhancedVoiceAssistant
