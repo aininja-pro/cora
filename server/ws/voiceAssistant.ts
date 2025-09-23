@@ -61,16 +61,41 @@ export function handleVoiceAssistant(browserWs: WebSocket, req: IncomingMessage)
           instructions: `You are CORA, a real estate AI assistant helping agents manage their tasks.
 
             When you receive a command:
-            1. Understand the intent and extract details
-            2. Use the create_task function to structure the task
-            3. Confirm briefly what you've created
+            1. Listen carefully for ALL details including names, phone numbers, addresses, times, and context
+            2. Extract and structure everything mentioned into the task
+            3. Use the create_task function with complete information
+            4. Confirm what you've created with the key details
 
-            Be professional and concise. Examples:
-            - "Call the title company back to remind them about closing" → Callback task for title company with closing reminder
-            - "Schedule showing at 123 Main St for 2pm" → Showing task with address and time
-            - "Remind me to call Mike Orr, this is urgent" → Urgent callback for Mike Orr
+            Important extraction rules:
+            - Phone numbers: Extract any phone number mentioned (e.g., "555-1234", "call him at 555-1234")
+            - Names: Capture full names when mentioned (first and last)
+            - Addresses: Get complete addresses including street number, name, city if mentioned
+            - Times: Specific times, dates, or urgency markers ("tomorrow at 2pm", "by end of day", "ASAP")
+            - Context: The reason, purpose, or additional details about WHY this task is needed
 
-            Always use the create_task function to structure tasks properly.`,
+            Create comprehensive task titles and descriptions that include:
+            - WHO needs to be contacted (name and/or company)
+            - WHAT needs to be done (call, email, schedule, send, etc.)
+            - WHEN it needs to happen (time, date, urgency)
+            - WHY it's important (closing, interested buyer, contract deadline, etc.)
+            - HOW to reach them (phone number if provided)
+
+            Examples:
+            - "Call Bill Brown at 555-1234 about the closing documents" →
+              Title: "Call Bill Brown about closing docs"
+              Contact: "Bill Brown"
+              Phone: "555-1234"
+              Description: "Call Bill Brown at 555-1234 regarding the closing documents"
+
+            - "Schedule showing for Sarah Johnson at 123 Main Street tomorrow at 2pm, her number is 555-9876" →
+              Title: "Showing - 123 Main St - Sarah Johnson 2pm"
+              Contact: "Sarah Johnson"
+              Phone: "555-9876"
+              Location: "123 Main Street"
+              Time: "Tomorrow at 2pm"
+              Description: "Schedule showing for Sarah Johnson (555-9876) at 123 Main Street tomorrow at 2pm"
+
+            Always extract ALL information provided and include it in the structured task.`,
           tools: [
             {
               type: 'function',
@@ -94,15 +119,23 @@ export function handleVoiceAssistant(browserWs: WebSocket, req: IncomingMessage)
                   },
                   contact: {
                     type: 'string',
-                    description: 'Person or company name if mentioned'
+                    description: 'Person or company name if mentioned (full name when available)'
+                  },
+                  phone: {
+                    type: 'string',
+                    description: 'Phone number if mentioned (extract in any format provided)'
                   },
                   location: {
                     type: 'string',
-                    description: 'Address or location if mentioned'
+                    description: 'Address or location if mentioned (full address with street number and name)'
                   },
                   time: {
                     type: 'string',
-                    description: 'Time, deadline or when to do this if mentioned'
+                    description: 'Time, deadline or when to do this if mentioned (be specific: "2pm tomorrow", "by 5pm today", etc.)'
+                  },
+                  context: {
+                    type: 'string',
+                    description: 'Additional context, reason, or details about why this task is needed'
                   },
                   is_urgent: {
                     type: 'boolean',

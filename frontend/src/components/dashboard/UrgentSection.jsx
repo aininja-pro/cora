@@ -41,6 +41,9 @@ function UrgentSection({ items = [], loading, onMoveToQueue, onDelete, onUpdate 
     setEditingId(item.id)
     setEditForm({
       title: item.title,
+      description: item.description || '',
+      contact: item.contact || '',
+      phone: item.phone || '',
       context: item.context || '',
       time: item.time || ''
     })
@@ -224,19 +227,41 @@ function UrgentSection({ items = [], loading, onMoveToQueue, onDelete, onUpdate 
                     className="w-full font-bold px-2 py-1 border border-gray-300 rounded"
                     placeholder="Title"
                   />
+                  <textarea
+                    value={editForm.description}
+                    onChange={(e) => setEditForm({...editForm, description: e.target.value})}
+                    className="w-full text-sm px-2 py-1 border border-gray-300 rounded h-16 resize-none"
+                    placeholder="Description"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={editForm.contact}
+                      onChange={(e) => setEditForm({...editForm, contact: e.target.value})}
+                      className="flex-1 text-sm px-2 py-1 border border-gray-300 rounded"
+                      placeholder="Contact name"
+                    />
+                    <input
+                      type="text"
+                      value={editForm.phone}
+                      onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                      className="flex-1 text-sm px-2 py-1 border border-gray-300 rounded"
+                      placeholder="Phone number"
+                    />
+                  </div>
                   <input
                     type="text"
                     value={editForm.context}
                     onChange={(e) => setEditForm({...editForm, context: e.target.value})}
                     className="w-full text-sm px-2 py-1 border border-gray-300 rounded"
-                    placeholder="Context"
+                    placeholder="Context or location"
                   />
                   <input
                     type="text"
                     value={editForm.time}
                     onChange={(e) => setEditForm({...editForm, time: e.target.value})}
-                    className="w-32 text-sm px-2 py-1 border border-gray-300 rounded"
-                    placeholder="Time"
+                    className="w-full text-sm px-2 py-1 border border-gray-300 rounded"
+                    placeholder="Time or deadline"
                   />
                   <div className="flex gap-2">
                     <button
@@ -260,9 +285,36 @@ function UrgentSection({ items = [], loading, onMoveToQueue, onDelete, onUpdate 
                   <h3 className={`font-bold mb-2 ${priorityConfig.text}`}>
                     {item.title}
                   </h3>
-                  <p className="text-sm text-gray-600 mb-4">
-                    {item.context}
-                  </p>
+
+                  {/* Show description if available */}
+                  {item.description && (
+                    <p className="text-sm text-gray-700 mb-2">
+                      {item.description}
+                    </p>
+                  )}
+
+                  {/* Contact and Phone on same line */}
+                  {(item.contact || item.phone) && (
+                    <div className="text-sm text-gray-600 mb-2">
+                      {item.contact && <span className="font-medium">{item.contact}</span>}
+                      {item.contact && item.phone && <span> • </span>}
+                      {item.phone && <span className="text-blue-600">{item.phone}</span>}
+                    </div>
+                  )}
+
+                  {/* Context or Location */}
+                  {item.context && (
+                    <p className="text-sm text-gray-600 mb-2">
+                      {item.context}
+                    </p>
+                  )}
+
+                  {/* Time if specified */}
+                  {item.time && (
+                    <p className="text-sm text-coral font-medium">
+                      {item.time}
+                    </p>
+                  )}
                 </>
               )}
 

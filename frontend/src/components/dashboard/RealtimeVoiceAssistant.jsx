@@ -106,8 +106,9 @@ function RealtimeVoiceAssistant({ onAddUrgent, onAddToQueue }) {
       title: args.title,
       description: args.description,
       contact: args.contact || '',
-      context: args.location || '',
-      time: args.time || new Date().toISOString(),
+      phone: args.phone || '',
+      context: args.context || args.location || '',
+      time: args.time || '',
       priority: args.priority,
       actions: actions[args.task_type] || ['Start', 'Add Note']
     }
