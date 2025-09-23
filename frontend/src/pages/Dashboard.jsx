@@ -8,12 +8,13 @@ import SignalBar from '../components/dashboard/SignalBar'
 import UrgentSection from '../components/dashboard/UrgentSection'
 import LiveFeed from '../components/dashboard/LiveFeed'
 import MyQueue from '../components/dashboard/MyQueue'
-import EnhancedVoiceAssistant from '../components/dashboard/EnhancedVoiceAssistant'
+import RealtimeVoiceAssistant from '../components/dashboard/RealtimeVoiceAssistant'
 import OnboardingFlow from '../components/dashboard/OnboardingFlow'
 
 // Services
 import sampleDataService from '../services/sampleDataService'
 import autoResolutionService from '../services/autoResolutionService'
+import taskService from '../services/taskService'
 
 // Hooks
 import { useLiveFeed } from '../hooks/useLiveFeed'
@@ -34,11 +35,36 @@ function Dashboard() {
   })
   const [timeRange, setTimeRange] = useState('today') // today, 7d, 30d
   const [selectedAgents, setSelectedAgents] = useState(['all'])
+
+  // Initialize urgent and queue items (will load from Supabase)
   const [urgentItems, setUrgentItems] = useState([])
   const [queueItems, setQueueItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [useSampleData, setUseSampleData] = useState(false)
   const [demoMode, setDemoMode] = useState('dashboard') // 'onboarding' or 'dashboard'
+
+  // Load tasks from Supabase on mount
+  const loadUserTasks = async () => {
+    const { urgentTasks, queueTasks } = await taskService.getTasks('Ray Richards')
+    setUrgentItems(urgentTasks)
+    setQueueItems(queueTasks)
+  }
+
+  // Subscribe to realtime task updates
+  useEffect(() => {
+    // Load initial tasks
+    loadUserTasks()
+
+    // Subscribe to changes
+    const unsubscribe = taskService.subscribeToTasks('Ray Richards', (payload) => {
+      // Reload tasks when any change occurs
+      loadUserTasks()
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [])
 
   // Use the real live feed data
   const { feedItems: liveFeedItems, loading: feedLoading } = useLiveFeed('Ray Richards')
@@ -80,7 +106,14 @@ function Dashboard() {
       if (cleanupSubscriptions) cleanupSubscriptions()
       if (autoResolutionInterval) clearInterval(autoResolutionInterval)
     }
-  }, [timeRange, selectedAgents])
+  }, []) // Remove dependencies to prevent re-running
+
+  // Separate useEffect for timeRange changes - only update stats
+  useEffect(() => {
+    if (!loading) {
+      loadKPIData()
+    }
+  }, [timeRange])
 
   const checkFirstRun = async () => {
     try {
@@ -206,10 +239,18 @@ function Dashboard() {
 
   const loadUrgentItems = async () => {
     try {
+      // Skip loading if we already have user items (don't overwrite)
       // Use sample data if enabled
       if (useSampleData) {
         const sampleUrgent = sampleDataService.getSampleUrgentItems()
-        setUrgentItems(sampleUrgent)
+        // Only set sample data if we don't have any items yet
+        setUrgentItems(prev => {
+          if (prev.length > 0) {
+            // Already have items, don't overwrite
+            return prev
+          }
+          return sampleUrgent
+        })
         return
       }
 
@@ -318,13 +359,20 @@ function Dashboard() {
         return bTime - aTime // Higher time = more urgent
       })
       
-      setUrgentItems(newUrgentItems)
-      
+      // Merge with user-created items from localStorage
+      setUrgentItems(prev => {
+        const userItems = prev.filter(item => item.isUserCreated)
+        return [...userItems, ...newUrgentItems]
+      })
+
     } catch (error) {
       console.error('Error loading urgent items:', error)
-      // Fallback to sample data
+      // Fallback to sample data but preserve user items
       const sampleUrgent = sampleDataService.getSampleUrgentItems()
-      setUrgentItems(sampleUrgent)
+      setUrgentItems(prev => {
+        const userItems = prev.filter(item => item.isUserCreated)
+        return [...userItems, ...sampleUrgent]
+      })
     }
   }
   
@@ -350,10 +398,18 @@ function Dashboard() {
 
   const loadMyQueue = async () => {
     try {
+      // Skip loading if we already have user items (don't overwrite)
       // Use sample data if enabled
       if (useSampleData) {
         const sampleQueue = sampleDataService.getSampleQueueItems()
-        setQueueItems(sampleQueue)
+        // Only set sample data if we don't have any items yet
+        setQueueItems(prev => {
+          if (prev.length > 0) {
+            // Already have items, don't overwrite
+            return prev
+          }
+          return sampleQueue
+        })
         return
       }
 
@@ -459,13 +515,20 @@ function Dashboard() {
         return priorityOrder[a.type] - priorityOrder[b.type]
       })
       
-      setQueueItems(newQueueItems)
-      
+      // Merge with user-created items from localStorage
+      setQueueItems(prev => {
+        const userItems = prev.filter(item => item.isUserCreated)
+        return [...userItems, ...newQueueItems]
+      })
+
     } catch (error) {
       console.error('Error loading My Queue:', error)
-      // Fallback to sample data
+      // Fallback to sample data but preserve user items
       const sampleQueue = sampleDataService.getSampleQueueItems()
-      setQueueItems(sampleQueue)
+      setQueueItems(prev => {
+        const userItems = prev.filter(item => item.isUserCreated)
+        return [...userItems, ...sampleQueue]
+      })
     }
   }
 
@@ -601,15 +664,51 @@ function Dashboard() {
         {/* New Layout Order: Urgent → My Queue → Live Feed */}
         
         {/* Urgent Section - Most important, shows first */}
-        <UrgentSection 
+        <UrgentSection
           items={urgentItems}
           loading={loading}
+          onMoveToQueue={async (item) => {
+            // Move to queue in Supabase
+            await taskService.moveTask(item.id, 'queue')
+            // Reload tasks to reflect change
+            loadUserTasks()
+          }}
+          onDelete={async (itemId) => {
+            // Delete from Supabase
+            await taskService.deleteTask(itemId)
+            // Reload tasks to reflect change
+            loadUserTasks()
+          }}
+          onUpdate={async (itemId, updates) => {
+            // Update in Supabase
+            await taskService.updateTask(itemId, updates)
+            // Reload tasks to reflect change
+            loadUserTasks()
+          }}
         />
 
         {/* My Queue Section - Actionable items above the fold */}
-        <MyQueue 
+        <MyQueue
           items={queueItems}
           loading={loading}
+          onMoveToUrgent={async (item) => {
+            // Move to urgent in Supabase
+            await taskService.moveTask(item.id, 'urgent')
+            // Reload tasks to reflect change
+            loadUserTasks()
+          }}
+          onDelete={async (itemId) => {
+            // Delete from Supabase
+            await taskService.deleteTask(itemId)
+            // Reload tasks to reflect change
+            loadUserTasks()
+          }}
+          onUpdate={async (itemId, updates) => {
+            // Update in Supabase
+            await taskService.updateTask(itemId, updates)
+            // Reload tasks to reflect change
+            loadUserTasks()
+          }}
         />
 
         {/* Live Feed Section - Context and recent activity */}
@@ -619,17 +718,21 @@ function Dashboard() {
         />
       </div>
 
-      {/* Enhanced Voice Assistant - Prominent AI-powered voice interface */}
-      <EnhancedVoiceAssistant
-        onAddUrgent={(task) => {
+      {/* Realtime Voice Assistant - Using OpenAI Realtime API */}
+      <RealtimeVoiceAssistant
+        onAddUrgent={async (task) => {
           console.log('Adding urgent task:', task)
-          // Add to urgent items - ensure prev is an array
-          setUrgentItems(prev => [task, ...(prev || [])])
+          // Save to Supabase
+          await taskService.createTask(task, 'urgent', 'Ray Richards')
+          // Reload tasks to show the new one
+          loadUserTasks()
         }}
-        onAddToQueue={(item) => {
+        onAddToQueue={async (item) => {
           console.log('Adding to queue:', item)
-          // Add to queue items - ensure prev is an array
-          setQueueItems(prev => [item, ...(prev || [])])
+          // Save to Supabase
+          await taskService.createTask(item, 'queue', 'Ray Richards')
+          // Reload tasks to show the new one
+          loadUserTasks()
         }}
         onUpdateLiveFeed={() => {
           // Trigger live feed refresh if needed

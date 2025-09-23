@@ -1,6 +1,11 @@
-import { AlertTriangle, Clock, Calendar, CheckCircle, MoreHorizontal } from 'lucide-react'
+import { AlertTriangle, Clock, Calendar, CheckCircle, MoreHorizontal, Edit2, Trash2, ArrowDown, X, Check } from 'lucide-react'
+import { useState } from 'react'
 
-function UrgentSection({ items = [], loading }) {
+function UrgentSection({ items = [], loading, onMoveToQueue, onDelete, onUpdate }) {
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({})
+  const [menuOpenId, setMenuOpenId] = useState(null)
+
   // Priority badges configuration
   const getPriorityConfig = (priority) => {
     switch (priority) {
@@ -32,6 +37,47 @@ function UrgentSection({ items = [], loading }) {
     }
   }
 
+  const handleEdit = (item) => {
+    setEditingId(item.id)
+    setEditForm({
+      title: item.title,
+      context: item.context || '',
+      time: item.time || ''
+    })
+    setMenuOpenId(null)
+  }
+
+  const handleSaveEdit = (itemId) => {
+    if (onUpdate) {
+      onUpdate(itemId, editForm)
+    }
+    setEditingId(null)
+    setEditForm({})
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setEditForm({})
+  }
+
+  const handleDelete = (itemId) => {
+    if (onDelete) {
+      onDelete(itemId)
+    }
+    setMenuOpenId(null)
+  }
+
+  const handleMoveToQueue = (item) => {
+    if (onMoveToQueue) {
+      onMoveToQueue(item)
+    }
+    setMenuOpenId(null)
+  }
+
+  const toggleMenu = (itemId) => {
+    setMenuOpenId(menuOpenId === itemId ? null : itemId)
+  }
+
   const sampleItems = [
     {
       id: '1',
@@ -43,7 +89,7 @@ function UrgentSection({ items = [], loading }) {
     },
     {
       id: '2',
-      priority: 'scheduling_conflict', 
+      priority: 'scheduling_conflict',
       title: 'Double-booked showing needs resolution',
       context: 'Your showing at 456 Oak Ave overlaps with 789 Pine St.',
       time: '2h',
@@ -115,7 +161,8 @@ function UrgentSection({ items = [], loading }) {
       <div className="space-y-4">
         {displayItems.map((item) => {
           const priorityConfig = getPriorityConfig(item.priority)
-          
+          const isEditing = editingId === item.id
+
           return (
             <div
               key={item.id}
@@ -129,36 +176,112 @@ function UrgentSection({ items = [], loading }) {
                 <div className="flex items-center gap-2">
                   <Clock className="h-4 w-4 text-gray-400" />
                   <span className="text-sm text-gray-500">{item.time}</span>
-                  <button className="p-1 hover:bg-gray-100 rounded">
-                    <MoreHorizontal className="h-4 w-4 text-gray-400" />
-                  </button>
+                  <div className="relative">
+                    <button
+                      onClick={() => toggleMenu(item.id)}
+                      className="p-1 hover:bg-gray-100 rounded"
+                    >
+                      <MoreHorizontal className="h-4 w-4 text-gray-400" />
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {menuOpenId === item.id && (
+                      <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 w-40">
+                        <button
+                          onClick={() => handleEdit(item)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm"
+                        >
+                          <Edit2 className="h-4 w-4" />
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleMoveToQueue(item)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm"
+                        >
+                          <ArrowDown className="h-4 w-4" />
+                          Move to Queue
+                        </button>
+                        <button
+                          onClick={() => handleDelete(item.id)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
-              {/* Title & Context */}
-              <h3 className={`font-bold mb-2 ${priorityConfig.text}`}>
-                {item.title}
-              </h3>
-              <p className="text-sm text-gray-600 mb-4">
-                {item.context}
-              </p>
+              {/* Title & Context - Editable */}
+              {isEditing ? (
+                <div className="space-y-2 mb-4">
+                  <input
+                    type="text"
+                    value={editForm.title}
+                    onChange={(e) => setEditForm({...editForm, title: e.target.value})}
+                    className="w-full font-bold px-2 py-1 border border-gray-300 rounded"
+                    placeholder="Title"
+                  />
+                  <input
+                    type="text"
+                    value={editForm.context}
+                    onChange={(e) => setEditForm({...editForm, context: e.target.value})}
+                    className="w-full text-sm px-2 py-1 border border-gray-300 rounded"
+                    placeholder="Context"
+                  />
+                  <input
+                    type="text"
+                    value={editForm.time}
+                    onChange={(e) => setEditForm({...editForm, time: e.target.value})}
+                    className="w-32 text-sm px-2 py-1 border border-gray-300 rounded"
+                    placeholder="Time"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleSaveEdit(item.id)}
+                      className="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600 flex items-center gap-1"
+                    >
+                      <Check className="h-4 w-4" />
+                      Save
+                    </button>
+                    <button
+                      onClick={handleCancelEdit}
+                      className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300 flex items-center gap-1"
+                    >
+                      <X className="h-4 w-4" />
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <h3 className={`font-bold mb-2 ${priorityConfig.text}`}>
+                    {item.title}
+                  </h3>
+                  <p className="text-sm text-gray-600 mb-4">
+                    {item.context}
+                  </p>
+                </>
+              )}
 
               {/* Actions */}
-              {item.actions && item.actions.length > 0 && (
-              <div className="flex gap-2">
-                {item.actions.map((action, idx) => (
-                  <button
-                    key={idx}
-                    className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                      idx === 0
-                        ? `${priorityConfig.badge} hover:opacity-90`
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
-                  >
-                    {action}
-                  </button>
-                ))}
-              </div>
+              {!isEditing && item.actions && item.actions.length > 0 && (
+                <div className="flex gap-2">
+                  {item.actions.map((action, idx) => (
+                    <button
+                      key={idx}
+                      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                        idx === 0
+                          ? `${priorityConfig.badge} hover:opacity-90`
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {action}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           )

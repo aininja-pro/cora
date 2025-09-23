@@ -1,9 +1,12 @@
-import { CheckCircle, Phone, Send, Calendar, FileText, User, Undo } from 'lucide-react'
+import { CheckCircle, Phone, Send, Calendar, FileText, User, Undo, MoreHorizontal, Edit2, Trash2, ArrowUp, X, Check } from 'lucide-react'
 import { useState } from 'react'
 
-function MyQueue({ items = [], loading }) {
+function MyQueue({ items = [], loading, onMoveToUrgent, onDelete, onUpdate }) {
   const [completedItems, setCompletedItems] = useState([])
   const [showUndo, setShowUndo] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [editForm, setEditForm] = useState({})
+  const [menuOpenId, setMenuOpenId] = useState(null)
 
   const sampleItems = [
     {
@@ -16,7 +19,7 @@ function MyQueue({ items = [], loading }) {
       status: 'open'
     },
     {
-      id: '2', 
+      id: '2',
       type: 'call_back',
       title: 'Call back Sarah Johnson',
       contact: 'Sarah Johnson',
@@ -35,7 +38,7 @@ function MyQueue({ items = [], loading }) {
     }
   ]
 
-  const displayItems = items && items.length > 0 ? items : (loading ? [] : sampleItems.filter(item => 
+  const displayItems = items && items.length > 0 ? items : (loading ? [] : sampleItems.filter(item =>
     !completedItems.includes(item.id)
   ))
 
@@ -89,7 +92,7 @@ function MyQueue({ items = [], loading }) {
   const handleComplete = (itemId) => {
     setCompletedItems(prev => [...prev, itemId])
     setShowUndo(itemId)
-    
+
     // Auto-hide undo after 10 seconds
     setTimeout(() => {
       setShowUndo(null)
@@ -105,7 +108,7 @@ function MyQueue({ items = [], loading }) {
     const itemIds = displayItems.map(item => item.id)
     setCompletedItems(prev => [...prev, ...itemIds])
     setShowUndo('all')
-    
+
     // Auto-hide undo after 10 seconds
     setTimeout(() => {
       setShowUndo(null)
@@ -115,6 +118,49 @@ function MyQueue({ items = [], loading }) {
   const handleUndoAll = () => {
     setCompletedItems([])
     setShowUndo(null)
+  }
+
+  const handleEdit = (item) => {
+    setEditingId(item.id)
+    setEditForm({
+      title: item.title,
+      contact: item.contact || '',
+      phone: item.phone || '',
+      context: item.context || '',
+      time: item.time || ''
+    })
+    setMenuOpenId(null)
+  }
+
+  const handleSaveEdit = (itemId) => {
+    if (onUpdate) {
+      onUpdate(itemId, editForm)
+    }
+    setEditingId(null)
+    setEditForm({})
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setEditForm({})
+  }
+
+  const handleDelete = (itemId) => {
+    if (onDelete) {
+      onDelete(itemId)
+    }
+    setMenuOpenId(null)
+  }
+
+  const handleMoveToUrgent = (item) => {
+    if (onMoveToUrgent) {
+      onMoveToUrgent(item)
+    }
+    setMenuOpenId(null)
+  }
+
+  const toggleMenu = (itemId) => {
+    setMenuOpenId(menuOpenId === itemId ? null : itemId)
   }
 
   if (loading) {
@@ -154,7 +200,7 @@ function MyQueue({ items = [], loading }) {
 
         {/* Clear My Queue Button */}
         {displayItems.length > 0 && (
-          <button 
+          <button
             onClick={handleClearQueue}
             className="px-3 py-1 text-sm text-coral hover:text-coral-dark font-medium"
           >
@@ -190,42 +236,149 @@ function MyQueue({ items = [], loading }) {
           {displayItems.map((item) => {
             const actionConfig = getActionConfig(item.type)
             const IconComponent = actionConfig.icon
+            const isEditing = editingId === item.id
 
             return (
               <div key={item.id} className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 transition-colors">
                 <div className="flex items-start gap-3">
                   <IconComponent className={`h-6 w-6 ${actionConfig.color} flex-shrink-0 mt-0.5`} />
-                  
+
                   <div className="flex-1 min-w-0">
-                    {/* Title */}
-                    <h3 className="font-medium text-navy mb-1">{item.title}</h3>
-                    
-                    {/* Contact info */}
+                    {/* Title and menu */}
+                    <div className="flex justify-between items-start mb-1">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editForm.title}
+                          onChange={(e) => setEditForm({...editForm, title: e.target.value})}
+                          className="flex-1 font-medium px-2 py-1 border border-gray-300 rounded mr-2"
+                          placeholder="Title"
+                        />
+                      ) : (
+                        <h3 className="font-medium text-navy flex-1">{item.title}</h3>
+                      )}
+
+                      <div className="relative">
+                        <button
+                          onClick={() => toggleMenu(item.id)}
+                          className="p-1 hover:bg-gray-100 rounded"
+                        >
+                          <MoreHorizontal className="h-4 w-4 text-gray-400" />
+                        </button>
+
+                        {/* Dropdown Menu */}
+                        {menuOpenId === item.id && (
+                          <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 w-40">
+                            <button
+                              onClick={() => handleEdit(item)}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm"
+                            >
+                              <Edit2 className="h-4 w-4" />
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleMoveToUrgent(item)}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm"
+                            >
+                              <ArrowUp className="h-4 w-4" />
+                              Move to Urgent
+                            </button>
+                            <button
+                              onClick={() => handleDelete(item.id)}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Contact info - Editable */}
                     <div className="text-sm text-gray-600 mb-2">
-                      <p className="font-medium">{item.contact}</p>
-                      {item.phone && (
-                        <p className="text-gray-500">{item.phone}</p>
-                      )}
-                      {item.context && (
-                        <p className="text-gray-500 mt-1">{item.context}</p>
-                      )}
-                      {item.time && (
-                        <p className="text-coral font-medium mt-1">{item.time}</p>
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <input
+                            type="text"
+                            value={editForm.contact}
+                            onChange={(e) => setEditForm({...editForm, contact: e.target.value})}
+                            className="w-full px-2 py-1 border border-gray-300 rounded"
+                            placeholder="Contact name"
+                          />
+                          <input
+                            type="text"
+                            value={editForm.phone}
+                            onChange={(e) => setEditForm({...editForm, phone: e.target.value})}
+                            className="w-full px-2 py-1 border border-gray-300 rounded"
+                            placeholder="Phone number"
+                          />
+                          {(item.context || editForm.context) && (
+                            <input
+                              type="text"
+                              value={editForm.context}
+                              onChange={(e) => setEditForm({...editForm, context: e.target.value})}
+                              className="w-full px-2 py-1 border border-gray-300 rounded"
+                              placeholder="Context"
+                            />
+                          )}
+                          {(item.time || editForm.time) && (
+                            <input
+                              type="text"
+                              value={editForm.time}
+                              onChange={(e) => setEditForm({...editForm, time: e.target.value})}
+                              className="w-full px-2 py-1 border border-gray-300 rounded"
+                              placeholder="Time"
+                            />
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <p className="font-medium">{item.contact}</p>
+                          {item.phone && (
+                            <p className="text-gray-500">{item.phone}</p>
+                          )}
+                          {item.context && (
+                            <p className="text-gray-500 mt-1">{item.context}</p>
+                          )}
+                          {item.time && (
+                            <p className="text-coral font-medium mt-1">{item.time}</p>
+                          )}
+                        </>
                       )}
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleComplete(item.id)}
-                        className="px-4 py-2 bg-coral text-white text-sm font-medium rounded-lg hover:bg-coral-dark transition-colors"
-                      >
-                        {actionConfig.primaryAction}
-                      </button>
-                      <button className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors">
-                        {actionConfig.secondaryAction}
-                      </button>
-                    </div>
+                    {isEditing ? (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleSaveEdit(item.id)}
+                          className="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600 flex items-center gap-1"
+                        >
+                          <Check className="h-4 w-4" />
+                          Save
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="px-3 py-1 bg-gray-200 text-gray-700 text-sm rounded hover:bg-gray-300 flex items-center gap-1"
+                        >
+                          <X className="h-4 w-4" />
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleComplete(item.id)}
+                          className="px-4 py-2 bg-coral text-white text-sm font-medium rounded-lg hover:bg-coral-dark transition-colors"
+                        >
+                          {actionConfig.primaryAction}
+                        </button>
+                        <button className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors">
+                          {actionConfig.secondaryAction}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
