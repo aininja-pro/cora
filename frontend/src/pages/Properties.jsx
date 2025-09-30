@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { MapPin, Bed, Bath, Square, DollarSign, Phone, Plus, X, Edit, Trash2, Image } from 'lucide-react'
+import { MapPin, Bed, Bath, Square, DollarSign, Phone, Plus, X, Edit, Trash2, Image, Upload } from 'lucide-react'
 import { API_URL } from '../config.js'
+import { uploadImage, deleteImage } from '../utils/imageUpload'
 
 function Properties() {
   const [properties, setProperties] = useState([])
@@ -11,6 +12,7 @@ function Properties() {
   const [editingProperty, setEditingProperty] = useState(null)
   const [showEditForm, setShowEditForm] = useState(false)
   const [updating, setUpdating] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [formData, setFormData] = useState({
     address: '',
     price: '',
@@ -188,21 +190,42 @@ function Properties() {
     }))
   }
 
-  const handleAddPhoto = () => {
-    const url = prompt('Enter image URL:')
-    if (url && url.trim()) {
+  const handleFileUpload = async (event) => {
+    const files = Array.from(event.target.files)
+    if (files.length === 0) return
+
+    setUploading(true)
+    setError(null)
+
+    try {
+      const uploadPromises = files.map(file => uploadImage(file))
+      const urls = await Promise.all(uploadPromises)
+
       setFormData(prev => ({
         ...prev,
-        photos: [...prev.photos, url.trim()]
+        photos: [...prev.photos, ...urls]
       }))
+    } catch (err) {
+      console.error('Upload error:', err)
+      setError('Failed to upload images: ' + err.message)
+    } finally {
+      setUploading(false)
     }
   }
 
-  const handleRemovePhoto = (index) => {
+  const handleRemovePhoto = async (index) => {
+    const photoUrl = formData.photos[index]
+
+    // Remove from form
     setFormData(prev => ({
       ...prev,
       photos: prev.photos.filter((_, i) => i !== index)
     }))
+
+    // Delete from storage (non-blocking)
+    if (photoUrl.includes('supabase')) {
+      await deleteImage(photoUrl)
+    }
   }
 
   const getPropertyImage = (property) => {
@@ -514,14 +537,30 @@ function Properties() {
                         </button>
                       </div>
                     ))}
-                    <button
-                      type="button"
-                      onClick={handleAddPhoto}
-                      className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-coral hover:text-coral transition flex items-center justify-center gap-2"
-                    >
-                      <Image className="h-4 w-4" />
-                      Add Photo URL
-                    </button>
+                    <label className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-coral hover:text-coral transition flex items-center justify-center gap-2 cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleFileUpload}
+                        disabled={uploading}
+                        className="hidden"
+                      />
+                      {uploading ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-coral border-t-transparent"></div>
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4" />
+                          <span>Upload Photos</span>
+                        </>
+                      )}
+                    </label>
+                    <p className="text-xs text-gray-500 text-center">
+                      Max 5MB per image. Photos will be automatically compressed.
+                    </p>
                   </div>
                 </div>
 
@@ -706,14 +745,30 @@ function Properties() {
                         </button>
                       </div>
                     ))}
-                    <button
-                      type="button"
-                      onClick={handleAddPhoto}
-                      className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-coral hover:text-coral transition flex items-center justify-center gap-2"
-                    >
-                      <Image className="h-4 w-4" />
-                      Add Photo URL
-                    </button>
+                    <label className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-coral hover:text-coral transition flex items-center justify-center gap-2 cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        onChange={handleFileUpload}
+                        disabled={uploading}
+                        className="hidden"
+                      />
+                      {uploading ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-2 border-coral border-t-transparent"></div>
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4" />
+                          <span>Upload Photos</span>
+                        </>
+                      )}
+                    </label>
+                    <p className="text-xs text-gray-500 text-center">
+                      Max 5MB per image. Photos will be automatically compressed.
+                    </p>
                   </div>
                 </div>
 
