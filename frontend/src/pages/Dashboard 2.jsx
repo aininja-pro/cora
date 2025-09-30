@@ -10,7 +10,6 @@ import LiveFeed from '../components/dashboard/LiveFeed'
 import MyQueue from '../components/dashboard/MyQueue'
 import RealtimeVoiceAssistant from '../components/dashboard/RealtimeVoiceAssistant'
 import OnboardingFlow from '../components/dashboard/OnboardingFlow'
-import CalendarView from '../components/dashboard/CalendarView'
 
 // Services
 import sampleDataService from '../services/sampleDataService'
@@ -711,9 +710,6 @@ function Dashboard() {
             loadUserTasks()
           }}
         />
-
-        {/* Calendar Section */}
-        <CalendarView />
 
         {/* Live Feed Section - Context and recent activity */}
         <LiveFeed

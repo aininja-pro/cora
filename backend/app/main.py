@@ -7,7 +7,7 @@ if os.getenv("APP_ENV") != "production":
     from dotenv import load_dotenv
     load_dotenv()
 
-from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple, synthflow_debug, synthflow_catch_all, synthflow_properties, twilio, twilio_simple, twilio_working, twilio_basic, twilio_static, twilio_elevenlabs, twilio_polly, twilio_polly_simple, twilio_conversation_relay, calls_api, properties_api, voice_integration, notifications, twilio_inbound
+from .routes import synthflow, agent, voice, synthflow_action, synthflow_simple, synthflow_debug, synthflow_catch_all, synthflow_properties, twilio, twilio_simple, twilio_working, twilio_basic, twilio_static, twilio_elevenlabs, twilio_polly, twilio_polly_simple, twilio_conversation_relay, calls_api, properties_api, voice_integration, notifications, twilio_inbound, property_contacts
 from .routes import twilio_conversation_relay_enhanced
 from .api import voice_commands
 
@@ -50,6 +50,7 @@ app.include_router(voice_integration.router)  # Voice integration endpoints
 app.include_router(notifications.router)  # SMS notifications
 app.include_router(twilio_inbound.router)  # Inbound SMS webhooks
 app.include_router(voice_commands.router)  # Voice command processing with OpenAI
+app.include_router(property_contacts.router)  # Property contacts and tasks
 
 @app.get("/")
 async def root():

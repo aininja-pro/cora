@@ -1,0 +1,409 @@
+/* Calendar Styles - Desktop and Mobile */
+
+/* Desktop-only coral event overrides */
+@media (min-width: 769px) {
+  .fc .fc-daygrid-event,
+  .fc .fc-timegrid-event {
+    background-color: #FF6B6B !important;
+    background: #FF6B6B !important;
+    border: none !important;
+    color: white !important;
+  }
+
+  .fc-event:hover {
+    background-color: #FF5252 !important;
+    background: #FF5252 !important;
+  }
+}
+
+/* Fix button visibility for all views */
+.fc-button {
+  background-color: white !important;
+  color: #374151 !important;
+  border: 1px solid #d1d5db !important;
+}
+
+.fc-button:hover:not(:disabled) {
+  background-color: #f3f4f6 !important;
+  color: #111827 !important;
+  border-color: #9ca3af !important;
+}
+
+.fc-button:disabled {
+  background-color: #f9fafb !important;
+  color: #9ca3af !important;
+  border-color: #e5e7eb !important;
+  opacity: 0.5;
+}
+
+.fc-button-active,
+.fc-button:active {
+  background-color: #FF6B6B !important;
+  color: white !important;
+  border-color: #FF6B6B !important;
+}
+
+/* Toolbar title visibility */
+.fc-toolbar-title {
+  color: #1e293b !important;
+  font-weight: 600;
+}
+
+/* Fix FullCalendar background colors - FORCE WHITE */
+.fc,
+.fc * {
+  background: none !important;
+}
+
+.fc-theme-standard,
+.fc-scrollgrid,
+.fc-view-harness,
+.fc-view,
+.fc-list,
+.fc-list-table,
+.fc-list-day,
+.fc-list-day-cushion {
+  background: white !important;
+  background-color: white !important;
+}
+
+/* List view day headers - dark prominent background */
+.fc-list-day th,
+.fc-list-day-frame {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* Event rows in list view - white background */
+.fc-list-event,
+.fc-list-event td,
+.fc-list-table tbody tr {
+  background: white !important;
+  background-color: white !important;
+}
+
+/* Remove any coral from non-event elements */
+.fc-list-table,
+.fc-list tbody,
+.fc-list-empty {
+  background: white !important;
+  background-color: white !important;
+}
+
+/* Remove ALL coral backgrounds except from actual events */
+.fc-scrollgrid-section > *,
+.fc-daygrid-body,
+.fc-timegrid-body {
+  background: white !important;
+  background-color: white !important;
+}
+
+/* Responsive font sizes */
+@media (max-width: 768px) {
+  /* Smaller text in calendar header */
+  .fc-toolbar-title {
+    font-size: 1.1rem !important;
+    font-weight: 600;
+    color: #1e293b !important;
+  }
+
+  /* Compact toolbar buttons with visible text */
+  .fc-button {
+    padding: 4px 8px !important;
+    font-size: 0.75rem !important;
+    background-color: white !important;
+    color: #374151 !important;
+    border: 1px solid #d1d5db !important;
+  }
+
+  .fc-button:hover {
+    background-color: #f3f4f6 !important;
+    color: #111827 !important;
+    border-color: #9ca3af !important;
+  }
+
+  .fc-button:disabled {
+    background-color: #f9fafb !important;
+    color: #9ca3af !important;
+    border-color: #e5e7eb !important;
+  }
+
+  .fc-button-active {
+    background-color: #FF6B6B !important;
+    color: white !important;
+    border-color: #FF6B6B !important;
+  }
+
+  .fc-button-primary {
+    background-color: #FF6B6B !important;
+    color: white !important;
+    border-color: #FF6B6B !important;
+  }
+
+  .fc-button-primary:hover {
+    background-color: #FF5252 !important;
+    border-color: #FF5252 !important;
+  }
+
+  /* Navigation arrows */
+  .fc-icon {
+    color: inherit !important;
+  }
+
+  /* Reduce spacing between toolbar elements */
+  .fc-toolbar {
+    gap: 0.25rem !important;
+    margin-bottom: 0.5rem !important;
+  }
+
+  .fc-toolbar-chunk {
+    display: flex;
+    gap: 2px !important;
+  }
+
+  /* List view improvements - Card-like events */
+  .fc-list-event {
+    display: flex;
+    flex-direction: column;
+    padding: 1rem !important;
+    background: white !important;
+    margin: 0.5rem 0.75rem !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+    border: 1px solid #e5e7eb !important;
+    border-left: 4px solid #FF6B6B !important;
+  }
+
+  .fc-list-event:hover {
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15) !important;
+    transform: translateY(-1px);
+    transition: all 0.2s ease;
+  }
+
+  .fc-list-event-time {
+    font-weight: 600;
+    color: #64748b !important;
+    margin-bottom: 0.25rem;
+    font-size: 0.85rem;
+  }
+
+  .fc-list-event-title {
+    font-size: 0.95rem;
+    line-height: 1.4;
+    color: #1e293b !important;
+    font-weight: 500;
+  }
+
+  /* Day headers - More prominent */
+  .fc-list-day-cushion {
+    background: #1e293b !important;
+    color: white !important;
+    font-weight: 700;
+    padding: 0.75rem 1rem !important;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-top: 3px solid #FF6B6B !important;
+    margin-top: 0.5rem !important;
+  }
+
+  .fc-list-day:first-child .fc-list-day-cushion {
+    margin-top: 0 !important;
+    border-top: none !important;
+  }
+
+  /* Add spacing between day groups */
+  .fc-list-day {
+    margin-bottom: 1rem !important;
+  }
+
+  /* Time grid improvements */
+  .fc-timegrid-event {
+    font-size: 0.7rem !important;
+    padding: 2px !important;
+  }
+
+  .fc-event-title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .fc-event-time {
+    font-size: 0.65rem;
+  }
+
+  /* Day grid improvements */
+  .fc-daygrid-event {
+    font-size: 0.7rem !important;
+    padding: 2px 4px !important;
+  }
+
+  .fc-daygrid-day-number {
+    font-size: 0.85rem;
+    padding: 4px !important;
+  }
+
+  /* Improve touch targets */
+  .fc-daygrid-day-frame,
+  .fc-timegrid-slot {
+    min-height: 40px;
+  }
+
+  /* Better scrolling */
+  .fc-scroller {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Hide less important elements on mobile */
+  .fc-timegrid-axis-cushion,
+  .fc-timegrid-slot-label-cushion {
+    font-size: 0.65rem !important;
+  }
+
+  /* Month/Week view events - ensure coral background on mobile too */
+  .fc-daygrid-event,
+  .fc-timegrid-event,
+  .fc-daygrid-block-event {
+    border: none !important;
+    border-radius: 4px !important;
+    background-color: #FF6B6B !important;
+    color: white !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+
+  .fc-daygrid-event:hover,
+  .fc-timegrid-event:hover {
+    background-color: #FF5252 !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+  }
+
+  /* Ensure text is visible in events */
+  .fc-daygrid-event .fc-event-title,
+  .fc-timegrid-event .fc-event-title {
+    color: white !important;
+  }
+
+  /* List view event styling - better contrast */
+  .fc-list-event-title,
+  .fc-list-event-title a {
+    color: #1e293b !important;
+    font-weight: 600;
+    background: transparent !important;
+    text-decoration: none;
+    font-size: 0.95rem !important;
+  }
+
+  .fc-list-event-time {
+    color: #FF6B6B !important;
+    background: transparent !important;
+    font-weight: 500;
+    font-size: 0.85rem !important;
+  }
+
+  /* List view event dot - coral accent */
+  .fc-list-event-dot {
+    border: 5px solid #FF6B6B !important;
+    background-color: #FF6B6B !important;
+    border-radius: 50% !important;
+    margin-right: 0.75rem !important;
+  }
+
+  /* Event hover state - subtle background */
+  .fc-list-event:hover td {
+    background-color: #fef2f2 !important;
+    cursor: pointer;
+  }
+
+  /* Remove default table cell padding */
+  .fc-list-event td {
+    padding: 0 !important;
+    border: none !important;
+  }
+
+  /* Today highlight */
+  .fc-day-today {
+    background: rgba(255, 107, 107, 0.05) !important;
+  }
+
+  /* Ensure white backgrounds everywhere except events */
+  .fc,
+  .fc-view,
+  .fc-view-harness {
+    background: white !important;
+    background-color: white !important;
+  }
+
+  .fc-theme-standard td,
+  .fc-theme-standard th,
+  .fc-theme-standard .fc-scrollgrid,
+  .fc-scrollgrid-section table,
+  .fc-scrollgrid-section-body table,
+  .fc-scrollgrid-section-footer table {
+    background: white !important;
+    background-color: white !important;
+  }
+
+  /* Override any inline styles */
+  .fc-list td[style*="background"] {
+    background: white !important;
+    background-color: white !important;
+  }
+
+  /* Improve header styling */
+  .fc-col-header-cell {
+    font-size: 0.75rem !important;
+    font-weight: 600;
+    color: #64748b;
+    padding: 0.5rem 0 !important;
+  }
+
+  /* List view - no events message */
+  .fc-list-empty {
+    padding: 2rem 1rem !important;
+    text-align: center;
+    color: #94a3b8;
+    font-size: 0.9rem;
+  }
+}
+
+/* Additional mobile optimizations */
+@media (max-width: 480px) {
+  .fc-toolbar-title {
+    font-size: 1rem !important;
+  }
+
+  .fc-button {
+    padding: 3px 6px !important;
+    font-size: 0.7rem !important;
+  }
+
+  /* Stack toolbar on very small screens */
+  .fc-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fc-toolbar-chunk {
+    justify-content: center;
+    margin: 2px 0;
+  }
+}
+
+/* Dark mode support for mobile */
+@media (prefers-color-scheme: dark) and (max-width: 768px) {
+  .fc {
+    background: #1e293b;
+    color: #f1f5f9;
+  }
+
+  .fc-list-day-cushion {
+    background: #334155 !important;
+    color: #f1f5f9;
+  }
+
+  .fc-list-event {
+    background: #1e293b;
+    border-bottom-color: #334155;
+  }
+}

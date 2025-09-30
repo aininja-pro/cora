@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -6,6 +7,8 @@ import { createServer } from 'http';
 import sessionRouter from './routes/session';
 import twilioRouter from './routes/twilio';
 import toolsRouter from './routes/tools';
+import calendarRouter from './routes/calendar';
+import notificationsRouter from './routes/notifications';
 import { handleMediaStream } from './ws/mediaBridge';
 import { handleVoiceAssistant } from './ws/voiceAssistant';
 
@@ -24,6 +27,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/session', sessionRouter);
 app.use('/twilio', twilioRouter);
 app.use('/api/tools', toolsRouter);
+app.use('/api/calendar', calendarRouter);
+app.use('/', notificationsRouter); // This handles /api/transactions, /api/stakeholders, /api/notifications
 
 // Static files for demo client (serve CSS, JS files)
 app.use('/client', express.static(path.join(__dirname, '../client')));

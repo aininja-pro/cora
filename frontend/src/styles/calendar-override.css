@@ -1,0 +1,75 @@
+/* CALENDAR STYLES - Separate Desktop and Mobile */
+
+/* DESKTOP ONLY - screens larger than 768px */
+@media (min-width: 769px) {
+  /* Fix white events on desktop - NOT list view */
+  .fc-daygrid-event,
+  .fc-timegrid-event,
+  .fc-h-event,
+  .fc-v-event {
+    background-color: #FF6B6B !important;
+    background: #FF6B6B !important;
+    border-color: #FF6B6B !important;
+    color: white !important;
+  }
+
+  /* Override inline styles for desktop grid/time views */
+  .fc-daygrid-event[style],
+  .fc-timegrid-event[style] {
+    background-color: #FF6B6B !important;
+    background: #FF6B6B !important;
+    color: white !important;
+  }
+
+  /* Event text white on desktop grid/time views */
+  .fc-daygrid-event .fc-event-title,
+  .fc-timegrid-event .fc-event-title,
+  .fc-daygrid-event .fc-event-time,
+  .fc-timegrid-event .fc-event-time {
+    color: white !important;
+  }
+
+  /* Desktop list view - keep readable */
+  .fc-list-event {
+    background: white !important;
+  }
+
+  .fc-list-event-title {
+    color: #FF6B6B !important;
+    font-weight: 600;
+  }
+
+  .fc-list-event-time {
+    color: #64748b !important;
+  }
+}
+
+/* MOBILE ONLY - screens 768px and smaller */
+@media (max-width: 768px) {
+  /* Reset any coral backgrounds on list items */
+  .fc-list-event,
+  .fc-list-event td,
+  .fc-list-event tr {
+    background: white !important;
+    background-color: white !important;
+  }
+
+  /* List event titles - dark for readability */
+  .fc-list-event-title,
+  .fc-list-event-title a {
+    color: #1e293b !important;
+    background: transparent !important;
+  }
+
+  /* List event times - coral accent */
+  .fc-list-event-time {
+    color: #FF6B6B !important;
+    background: transparent !important;
+  }
+
+  /* Month view events on mobile - these should be coral */
+  .fc-daygrid-event {
+    background-color: #FF6B6B !important;
+    color: white !important;
+  }
+}

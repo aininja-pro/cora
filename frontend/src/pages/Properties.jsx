@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { MapPin, Bed, Bath, Square, DollarSign, Phone, Plus, X, Edit, Trash2, Image, Upload } from 'lucide-react'
 import { API_URL } from '../config.js'
 import { uploadImage, deleteImage } from '../utils/imageUpload'
+import PropertyDetail from '../components/PropertyDetail'
 
 function Properties() {
   const [properties, setProperties] = useState([])
@@ -13,6 +14,7 @@ function Properties() {
   const [showEditForm, setShowEditForm] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [selectedProperty, setSelectedProperty] = useState(null)
   const [formData, setFormData] = useState({
     address: '',
     price: '',
@@ -375,14 +377,12 @@ function Properties() {
                 {property.description}
               </p>
 
-              <div className="flex gap-2">
-                <button className="flex-1 bg-coral text-white py-2 px-4 rounded-lg hover:bg-coral-dark transition text-sm font-medium">
-                  View Details
-                </button>
-                <button className="bg-gray-100 text-gray-700 py-2 px-4 rounded-lg hover:bg-gray-200 transition">
-                  <Phone className="h-4 w-4" />
-                </button>
-              </div>
+              <button
+                onClick={() => setSelectedProperty(property)}
+                className="w-full bg-coral text-white py-2 px-4 rounded-lg hover:bg-coral-dark transition text-sm font-medium"
+              >
+                View Details
+              </button>
             </div>
           </div>
         ))}
@@ -802,6 +802,14 @@ function Properties() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Property Detail Modal */}
+      {selectedProperty && (
+        <PropertyDetail
+          property={selectedProperty}
+          onClose={() => setSelectedProperty(null)}
+        />
       )}
     </div>
   )
