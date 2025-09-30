@@ -12,6 +12,7 @@ function PropertyVoiceAssistant({ propertyId, propertyAddress, onContactAdded, o
   const audioContextRef = useRef(null)
   const streamRef = useRef(null)
   const processedEventIds = useRef(new Set()) // Track processed function calls to prevent duplicates
+  const recentSubmissions = useRef(new Map()) // Track recent submissions by content hash
 
   const connectToRealtime = () => {
     // Close any existing connection first
@@ -110,37 +111,72 @@ function PropertyVoiceAssistant({ propertyId, propertyAddress, onContactAdded, o
 
   const handleTaskCreation = async (args) => {
     console.log('Creating task for property:', args)
+    console.log('Full args:', JSON.stringify(args, null, 2))
+
+    // Create a content hash to detect duplicates
+    const contentHash = `${args.title || ''}-${args.description || ''}-${args.contact || ''}`.toLowerCase()
+    const now = Date.now()
+
+    // Check if we submitted this exact content in the last 5 seconds
+    if (recentSubmissions.current.has(contentHash)) {
+      const lastSubmission = recentSubmissions.current.get(contentHash)
+      if (now - lastSubmission < 5000) {
+        console.log('⏭️ Skipping duplicate submission (same content within 5s):', contentHash)
+        return
+      }
+    }
+
+    // Mark this content as submitted
+    recentSubmissions.current.set(contentHash, now)
+
+    // Clean up old entries (older than 10 seconds)
+    for (const [hash, timestamp] of recentSubmissions.current.entries()) {
+      if (now - timestamp > 10000) {
+        recentSubmissions.current.delete(hash)
+      }
+    }
 
     // Determine if this is a contact (person) or task (action) based on context
     const combined = (args.description + ' ' + args.title).toLowerCase()
 
-    // It's a CONTACT if:
-    // 1. Has a contact name AND mentions adding someone with a role (buyer, inspector, etc.)
-    // 2. Does NOT mention action verbs like call, schedule, follow up
+    // Check if we have a contact name
     const hasContactName = args.contact && args.contact.length > 2
 
+    // Check for role keywords
     const mentionsRole = combined.includes('buyer') ||
                          combined.includes('inspector') ||
-                         combined.includes('title') ||
+                         combined.includes('title company') ||
                          combined.includes('lender') ||
                          combined.includes('attorney') ||
                          combined.includes('appraiser') ||
                          combined.includes('contractor')
 
-    const isAddingPerson = (combined.includes('add') || combined.includes('added')) &&
-                           (mentionsRole || combined.includes('as a') || combined.includes('as the') || combined.includes('potential'))
+    // Check for "adding" language
+    const isAddingPerson = combined.includes('add') ||
+                           combined.includes('added') ||
+                           combined.includes('potential buyer') ||
+                           combined.includes('potential inspector') ||
+                           (hasContactName && mentionsRole && !combined.includes('call him') && !combined.includes('call her') && !combined.includes('contact him') && !combined.includes('contact her'))
 
-    // It's a TASK if:
-    // - Mentions actions like "call", "schedule", "send", "follow up", etc.
-    const isAction = combined.includes('call') ||
-                     combined.includes('schedule') ||
-                     combined.includes('send') ||
-                     combined.includes('follow up') ||
-                     combined.includes('remind') ||
-                     combined.includes('meet') ||
-                     combined.includes('email')
+    // Check for action verbs that indicate it's a task, not a contact addition
+    const isActionTask = (combined.includes('call') && (combined.includes('about') || combined.includes('regarding') || combined.includes('to discuss'))) ||
+                         combined.includes('schedule a') ||
+                         combined.includes('send to') ||
+                         combined.includes('follow up with') ||
+                         combined.includes('remind') ||
+                         combined.includes('meet with') ||
+                         combined.includes('email about')
 
-    if (hasContactName && isAddingPerson && !isAction) {
+    console.log('Classification debug:', {
+      hasContactName,
+      mentionsRole,
+      isAddingPerson,
+      isActionTask,
+      contactName: args.contact
+    })
+
+    // Priority: If it explicitly mentions adding AND has a contact name AND a role, it's a contact
+    if (hasContactName && isAddingPerson && mentionsRole && !isActionTask) {
       // Save as contact
       console.log('→ Saving as CONTACT')
       await handleAddContact(args)

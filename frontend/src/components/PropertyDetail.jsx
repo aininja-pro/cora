@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, ChevronLeft, ChevronRight, User, Building2, Mic, Plus, Phone, Mail, Briefcase, AlertCircle } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, User, Building2, Mic, Plus, Phone, Mail, Briefcase, AlertCircle, Edit2, Trash2 } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 import PropertyVoiceAssistant from './PropertyVoiceAssistant'
 
@@ -63,6 +63,44 @@ function PropertyDetail({ property, onClose }) {
       currency: 'USD',
       minimumFractionDigits: 0,
     }).format(price)
+  }
+
+  const handleDeleteContact = async (contactId) => {
+    if (!confirm('Are you sure you want to delete this contact?')) return
+
+    try {
+      const { error } = await supabase
+        .from('property_contacts')
+        .delete()
+        .eq('id', contactId)
+
+      if (error) throw error
+
+      // Refresh the contacts list
+      fetchPropertyData()
+    } catch (error) {
+      console.error('Error deleting contact:', error)
+      alert('Failed to delete contact')
+    }
+  }
+
+  const handleDeleteTask = async (taskId) => {
+    if (!confirm('Are you sure you want to delete this task?')) return
+
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .delete()
+        .eq('id', taskId)
+
+      if (error) throw error
+
+      // Refresh the tasks list
+      fetchPropertyData()
+    } catch (error) {
+      console.error('Error deleting task:', error)
+      alert('Failed to delete task')
+    }
   }
 
   const getContactIcon = (type) => {
@@ -197,7 +235,7 @@ function PropertyDetail({ property, onClose }) {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {contacts.map((contact) => (
-                  <div key={contact.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                  <div key={contact.id} className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition relative group">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <span className={`p-2 rounded-full ${getContactColor(contact.contact_type)}`}>
@@ -208,11 +246,20 @@ function PropertyDetail({ property, onClose }) {
                           <p className="text-xs text-gray-500">{getContactTypeLabel(contact.contact_type)}</p>
                         </div>
                       </div>
-                      {contact.status && (
-                        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                          {contact.status}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {contact.status && (
+                          <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                            {contact.status}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => handleDeleteContact(contact.id)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-700 p-1"
+                          title="Delete contact"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                     {contact.phone && (
                       <div className="flex items-center gap-2 text-sm text-gray-600 mb-1">
@@ -262,20 +309,31 @@ function PropertyDetail({ property, onClose }) {
             ) : (
               <div className="space-y-3">
                 {tasks.map((task) => (
-                  <div key={task.id} className="bg-white border border-gray-200 rounded-lg p-4">
-                    <p className="font-medium text-navy">{task.title || task.transcript}</p>
-                    {task.description && <p className="text-sm text-gray-600 mt-1">{task.description}</p>}
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className={`text-xs px-2 py-1 rounded-full ${
-                        task.status === 'completed' ? 'bg-green-100 text-green-700' :
-                        task.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>
-                        {task.status || 'pending'}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        {new Date(task.created_at).toLocaleDateString()}
-                      </span>
+                  <div key={task.id} className="bg-white border border-gray-200 rounded-lg p-4 relative group">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="font-medium text-navy">{task.title || task.transcript}</p>
+                        {task.description && <p className="text-sm text-gray-600 mt-1">{task.description}</p>}
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            task.status === 'completed' ? 'bg-green-100 text-green-700' :
+                            task.status === 'in_progress' ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-gray-100 text-gray-700'
+                          }`}>
+                            {task.status || 'pending'}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {new Date(task.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteTask(task.id)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-red-500 hover:text-red-700 p-1 ml-2"
+                        title="Delete task"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
                 ))}
