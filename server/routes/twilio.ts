@@ -54,12 +54,13 @@ router.post('/voice', (req, res) => {
     console.log(`   From: ${From} (${FromCity}, ${FromState})`);
     console.log(`   To: ${To}`);
     
-    // Return TwiML with WebSocket stream to ngrok (with parameters)
-    const ngrokUrl = "637e8198f05b.ngrok-free.app";
+    // Return TwiML with WebSocket stream (use PUBLIC_URL from env)
+    const publicUrl = process.env.PUBLIC_URL || "http://localhost:3000";
+    const wsUrl = publicUrl.replace('https://', 'wss://').replace('http://', 'ws://');
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
-    <Stream url="wss://${ngrokUrl}/media-stream">
+    <Stream url="${wsUrl}/media-stream">
       <Parameter name="callSid" value="${CallSid}"/>
       <Parameter name="from" value="${From}"/>
       <Parameter name="to" value="${To}"/>

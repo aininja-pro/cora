@@ -250,12 +250,12 @@ export async function runTool(
           
           // Filter by bedrooms
           if (beds !== undefined) {
-            query = query.gte('bedrooms', beds);
+            query = query.gte('beds', beds);
           }
-          
+
           // Filter by bathrooms
           if (baths !== undefined) {
-            query = query.gte('bathrooms', baths);
+            query = query.gte('baths', baths);
           }
           
           // Execute query
@@ -297,9 +297,9 @@ export async function runTool(
             id: p.id || p.property_id,
             address: p.address,
             price: p.price,
-            beds: p.bedrooms,
-            baths: p.bathrooms,
-            sqft: p.square_feet || p.sqft,
+            beds: p.beds,
+            baths: p.baths,
+            sqft: p.sqft,
             status: p.status,
             description: p.description?.substring(0, 100) + '...'
           }));
